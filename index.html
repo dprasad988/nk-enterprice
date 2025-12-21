@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hardware POS System</title>
+    <link rel="stylesheet" href="src/styles.css">
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="root"></div>
+    <!-- In Electron with nodeIntegration, we can require modules directly if needed, 
+         but we'll use a simple script loader for React -->
+    <script>
+        // Fix for 'exports is not defined' in some environments
+        var exports = {}; 
+    </script>
+    <!-- We need a bundler in a real app, but for this 'simple' structure without Webpack/Vite config 
+         explicitly requested, we might hit issues with JSX. 
+         Wait, user asked to "create folders and create files". 
+         I will assume standard CRA-like structure or manual setup? 
+         Given the request "create files", I will assume we are NOT running a bundler yet.
+         HOWEVER, writing raw JSX in Electron without a build step won't work easily.
+         
+         To make this actually runnable easily without complex build steps, 
+         I will use Babel standalone for in-browser transpilation OR assume the user will run a build.
+         
+         Let's stick to the Plan: "Setup Electron + React Environment".
+         The best way is to assume a standard build (Vite/Webpack).
+         But since I didn't create a vite.config.js, let's create a minimal vite config 
+         OR just write standard file structure and assume a modern runtime.
+         
+         Actually, the previous package.json didn't have vite. 
+         Let me update package.json to include vite for a smooth dev experience.
+    -->
+    <script type="module" src="/src/index.jsx"></script>
+</body>
+</html>
