@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { fetchSales } from '../api/sales';
+import React, { useState } from 'react';
+import { useSales } from '../api/sales';
 import { useStore } from '../context/StoreContext';
 import SalesLogsModal from '../components/sales/SalesLogsModal';
 import LogsDropdown from '../components/LogsDropdown';
@@ -7,25 +7,13 @@ import LogsDropdown from '../components/LogsDropdown';
 const Sales = () => {
     const { selectedStoreId, role } = useStore();
     const isOwner = role === 'OWNER';
-    const [sales, setSales] = useState([]);
+
+    // Data Fetching
+    const { data: sales = [], isLoading } = useSales(selectedStoreId);
 
     // Logs State
     const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
     const [logFilter, setLogFilter] = useState(null);
-
-    useEffect(() => {
-        const loadSales = async () => {
-            if (isOwner && !selectedStoreId) return;
-            try {
-                const storeFilter = selectedStoreId;
-                const data = await fetchSales(storeFilter);
-                setSales(data);
-            } catch (err) {
-                console.error(err);
-            }
-        };
-        loadSales();
-    }, [selectedStoreId]);
 
     const handleLogFilterChange = (filter) => {
         setLogFilter(filter);

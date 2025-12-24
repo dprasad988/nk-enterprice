@@ -1,33 +1,39 @@
-import React, { useState, useEffect } from 'react';
-import { Bell, AlertTriangle, CheckCircle, Info } from 'lucide-react';
-import { fetchProducts } from '../api/products';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Bell, AlertTriangle, CheckCircle, Info, Check, CornerDownLeft } from 'lucide-react';
+import { useProducts } from '../api/products';
+import { usePendingReturns } from '../api/returns';
 
 const Notifications = () => {
-    const [products, setProducts] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [notifications, setNotifications] = useState([]);
+    const [readNotifs, setReadNotifs] = useState([]);
+    const navigate = useNavigate();
+    const role = localStorage.getItem('role');
+
+    // Use Custom Hook
+    const { data: products = [], isLoading: loading } = useProducts();
+    const { data: pendingReturns = [] } = usePendingReturns(role === 'OWNER' ? null : localStorage.getItem('storeId'));
 
     useEffect(() => {
-        getProducts();
+        // Load read notifications
+        const savedRead = JSON.parse(localStorage.getItem('read_notifications') || '[]');
+        setReadNotifs(savedRead);
+
+        // Listen for standard custom events
+        const handleUpdate = () => {
+            const up = JSON.parse(localStorage.getItem('read_notifications') || '[]');
+            setReadNotifs(up);
+        };
+        window.addEventListener('notificationStateChanged', handleUpdate);
+        return () => window.removeEventListener('notificationStateChanged', handleUpdate);
     }, []);
 
-    const getProducts = async () => {
-        try {
-            const data = await fetchProducts();
-            setProducts(data);
-            generateNotifications(data);
-            setLoading(false);
-        } catch (error) {
-            console.error("Error fetching products", error);
-            setLoading(false);
-        }
-    };
-
-    const generateNotifications = (productsList) => {
+    // Derive notifications
+    const notifications = useMemo(() => {
+        const list = products || [];
         const newNotifications = [];
 
         // Low Stock Alerts
-        const lowStockItems = productsList.filter(p => p.stock <= 10);
+        const lowStockItems = list.filter(p => p.stock <= 10);
         lowStockItems.forEach(item => {
             const isOutOfStock = item.stock === 0;
             newNotifications.push({
@@ -39,6 +45,21 @@ const Notifications = () => {
             });
         });
 
+        // Pending Damage Returns
+        if (role !== 'CASHIER') {
+            pendingReturns.forEach(req => {
+                newNotifications.push({
+                    id: `return-${req.id}`,
+                    type: 'warning',
+                    title: 'New Damage Return Request',
+                    message: `Item: ${req.productName} (x${req.quantity}). Reason: ${req.reason}`,
+                    date: req.returnDate || new Date().toISOString(),
+                    actionLabel: 'Review Request',
+                    onAction: () => navigate('/damage-requests')
+                });
+            });
+        }
+
         // Add dummy system notification
         newNotifications.push({
             id: 'sys-welcome',
@@ -48,51 +69,131 @@ const Notifications = () => {
             date: new Date().toISOString()
         });
 
-        setNotifications(newNotifications);
+        // Map read status
+        const mappedNotifications = newNotifications.map(n => ({
+            ...n,
+            isRead: readNotifs.includes(n.id)
+        }));
+
+        // Sort: Unread first
+        mappedNotifications.sort((a, b) => (a.isRead === b.isRead ? 0 : a.isRead ? 1 : -1));
+
+        return mappedNotifications;
+    }, [products, readNotifs]);
+
+    const handleMarkAsRead = (id) => {
+        const updatedRead = [...readNotifs, id];
+        setReadNotifs(updatedRead);
+        localStorage.setItem('read_notifications', JSON.stringify(updatedRead));
+        window.dispatchEvent(new Event('notificationStateChanged'));
+    };
+
+    const handleMarkAllAsRead = () => {
+        const allIds = notifications.map(n => n.id);
+        const updatedRead = [...readNotifs, ...allIds];
+        const uniqueRead = [...new Set(updatedRead)];
+
+        setReadNotifs(uniqueRead);
+        localStorage.setItem('read_notifications', JSON.stringify(uniqueRead));
+        window.dispatchEvent(new Event('notificationStateChanged'));
     };
 
     const getIcon = (type) => {
         switch (type) {
-            case 'danger': return <AlertTriangle className="text-red-500" />;
-            case 'warning': return <AlertTriangle className="text-amber-500" />;
-            case 'success': return <CheckCircle className="text-green-500" />;
-            default: return <Info className="text-blue-500" />;
+            case 'danger': return <AlertTriangle size={24} color="#ef4444" />;
+            case 'warning': return <AlertTriangle size={24} color="#f59e0b" />;
+            case 'success': return <CheckCircle size={24} color="#10b981" />;
+            default: return <Info size={24} color="#3b82f6" />;
         }
     };
 
     return (
         <div className="p-6">
-
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>Notifications</h2>
+                {notifications.some(n => !n.isRead) && (
+                    <button
+                        onClick={handleMarkAllAsRead}
+                        className="btn"
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                    >
+                        <Check size={16} /> Mark All Read
+                    </button>
+                )}
+            </div>
 
             {loading ? (
                 <div>Loading notifications...</div>
             ) : (
                 <div className="space-y-4">
                     {notifications.length === 0 ? (
-                        <div className="text-center text-stone-400 py-10">
-                            No new notifications
+                        <div className="text-center text-stone-400 py-10" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+                            <Bell size={48} style={{ opacity: 0.2 }} />
+                            <span>No new notifications</span>
                         </div>
                     ) : (
                         notifications.map(notif => (
                             <div key={notif.id} className="card" style={{
-                                padding: '0.75rem 1rem',
+                                padding: '1rem',
                                 display: 'flex',
-                                alignItems: 'center',
+                                alignItems: 'flex-start',
                                 gap: '1rem',
                                 borderLeft: `4px solid ${notif.type === 'danger' ? '#ef4444' : (notif.type === 'warning' ? '#f59e0b' : '#3b82f6')}`,
-                                marginBottom: '0.5rem'
+                                marginBottom: '0.5rem',
+                                position: 'relative',
+                                background: notif.isRead ? '#f3f4f6' : 'white',
+                                border: notif.isRead ? '1px solid #e5e7eb' : '1px solid transparent',
+                                boxShadow: notif.isRead ? 'none' : '0 2px 4px rgba(0,0,0,0.05)',
+                                color: 'black'
                             }}>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <div style={{ marginTop: '2px' }}>
                                     {getIcon(notif.type)}
                                 </div>
                                 <div style={{ flex: 1 }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.1rem' }}>
-                                        <h3 style={{ fontSize: '1rem', fontWeight: 'bold', margin: 0 }}>{notif.title}</h3>
-                                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.25rem' }}>
+                                        <h3 style={{ fontSize: '1.1rem', fontWeight: 'bold', margin: 0, color: notif.isRead ? '#6b7280' : 'black' }}>
+                                            {notif.title}
+                                            {notif.isRead && <span style={{ marginLeft: '10px', fontSize: '0.7rem', backgroundColor: '#e5e7eb', padding: '2px 6px', borderRadius: '4px', color: '#6b7280', textTransform: 'uppercase' }}>Read</span>}
+                                        </h3>
+                                        <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
                                             {new Date(notif.date).toLocaleDateString()}
                                         </span>
                                     </div>
-                                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{notif.message}</p>
+                                    <p style={{ margin: 0, fontSize: '0.95rem', color: notif.isRead ? '#6b7280' : '#374151' }}>{notif.message}</p>
+
+                                    {!notif.isRead && (
+                                        <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'flex-end' }}>
+                                            <button
+                                                onClick={() => handleMarkAsRead(notif.id)}
+                                                className="btn"
+                                                style={{
+                                                    padding: '0.4rem 0.8rem',
+                                                    fontSize: '0.8rem',
+                                                    backgroundColor: '#e5e7eb',
+                                                    color: '#374151',
+                                                    border: '1px solid #d1d5db'
+                                                }}
+                                            >
+                                                Mark as Read
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {notif.actionLabel && (
+                                        <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'flex-end' }}>
+                                            <button
+                                                onClick={notif.onAction}
+                                                className="btn btn-primary"
+                                                style={{
+                                                    padding: '0.4rem 0.8rem',
+                                                    fontSize: '0.8rem',
+                                                    display: 'flex', alignItems: 'center', gap: '0.5rem'
+                                                }}
+                                            >
+                                                <CornerDownLeft size={14} /> {notif.actionLabel}
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ))

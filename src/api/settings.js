@@ -1,28 +1,25 @@
-import api from './axiosInstance';
+import axiosInstance from './axiosInstance';
+import { useQuery } from '@tanstack/react-query';
 
-export const fetchSettings = async () => {
-    try {
-        const response = await api.get('/settings');
-        return response.data;
-    } catch (error) {
-        throw error;
-    }
+// Fetch settings as a Map (key -> value)
+export const fetchSettingsMap = async (storeId) => {
+    const params = storeId ? { storeId } : {};
+    const response = await axiosInstance.get('/discount-settings/map', { params });
+    return response.data;
 };
 
-export const fetchSettingsMap = async () => {
-    try {
-        const response = await api.get('/settings/map');
-        return response.data;
-    } catch (error) {
-        throw error;
-    }
+// Update settings
+export const updateSettings = async (settingsList) => {
+    // settingsList should items with { settingKey, settingValue, storeId, description }
+    const response = await axiosInstance.post('/discount-settings', settingsList);
+    return response.data;
 };
 
-export const updateSettings = async (settings) => {
-    try {
-        const response = await api.post('/settings', settings);
-        return response.data;
-    } catch (error) {
-        throw error;
-    }
+// Hook for fetching settings
+export const useSettingsMap = (storeId) => {
+    return useQuery({
+        queryKey: ['settingsMap', storeId],
+        queryFn: () => fetchSettingsMap(storeId),
+        refetchOnWindowFocus: false,
+    });
 };

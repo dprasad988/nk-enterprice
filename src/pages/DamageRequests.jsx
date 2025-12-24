@@ -1,62 +1,52 @@
-import React, { useState, useEffect } from 'react';
-import { fetchPendingReturns, approveReturn, rejectReturn, fetchAllReturns } from '../api/returns';
+import React, { useState } from 'react';
+import { usePendingReturns, useAllReturns, approveReturn, rejectReturn } from '../api/returns';
 import { Check, X, AlertTriangle, FileText, List } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
-import Alert from '../components/Alert';
 import { useStore } from '../context/StoreContext';
+import { useAlert } from '../context/AlertContext';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 const DamageRequests = () => {
     const [activeTab, setActiveTab] = useState('requests'); // 'requests' | 'history'
-    const [requests, setRequests] = useState([]);
-    const [history, setHistory] = useState([]);
-    const [loading, setLoading] = useState(true);
     const [actionRequest, setActionRequest] = useState(null); // { id, type: 'APPROVE' | 'REJECT' }
-    const [alert, setAlert] = useState(null);
     const { selectedStoreId, role } = useStore();
+    const { showAlert } = useAlert();
+    const queryStoreId = role === 'OWNER' ? selectedStoreId : localStorage.getItem('storeId');
 
-    const loadData = async () => {
-        setLoading(true);
-        try {
-            const queryStoreId = role === 'OWNER' ? selectedStoreId : localStorage.getItem('storeId');
+    // TanStack Query Hooks
+    const { data: requests = [], isLoading: requestsLoading } = usePendingReturns(queryStoreId);
+    const { data: historyData = [], isLoading: historyLoading } = useAllReturns(queryStoreId);
 
-            if (activeTab === 'requests') {
-                const data = await fetchPendingReturns(queryStoreId);
-                setRequests(data);
-            } else {
-                const data = await fetchAllReturns(queryStoreId);
-                // Sort by date desc
-                const sorted = data.sort((a, b) => new Date(b.returnDate) - new Date(a.returnDate));
-                setHistory(sorted);
-            }
-        } catch (e) {
-            console.error(e);
-            setAlert({ message: "Failed to load data", type: "error" });
-        } finally {
-            setLoading(false);
+    // Sort history
+    const history = historyData ? [...historyData].sort((a, b) => new Date(b.returnDate) - new Date(a.returnDate)) : [];
+
+    const loading = activeTab === 'requests' ? requestsLoading : historyLoading;
+
+    // Mutations
+    const queryClient = useQueryClient();
+
+    const actionMutation = useMutation({
+        mutationFn: async ({ id, type }) => {
+            if (type === 'APPROVE') return approveReturn(id);
+            else return rejectReturn(id);
+        },
+        onSuccess: (data, variables) => {
+            const type = variables.type;
+            showAlert(`Request ${type === 'APPROVE' ? 'Approved' : 'Rejected'}`, type === 'APPROVE' ? 'success' : 'info');
+            queryClient.invalidateQueries(['pendingReturns']);
+            queryClient.invalidateQueries(['allReturns']);
+            queryClient.invalidateQueries(['approvedReturns']);
+            setActionRequest(null);
+        },
+        onError: (error) => {
+            showAlert("Action failed: " + (error.response?.data?.message || error.message), "error");
+            setActionRequest(null);
         }
-    };
+    });
 
-    useEffect(() => {
-        loadData();
-    }, [selectedStoreId, activeTab]);
-
-    const handleAction = async () => {
+    const handleAction = () => {
         if (!actionRequest) return;
-        try {
-            if (actionRequest.type === 'APPROVE') {
-                await approveReturn(actionRequest.id);
-                setAlert({ message: "Request Approved", type: "success" });
-            } else {
-                await rejectReturn(actionRequest.id);
-                setAlert({ message: "Request Rejected", type: "info" });
-            }
-            loadData();
-            setActionRequest(null);
-        } catch (e) {
-            console.error(e);
-            setAlert({ message: "Action failed: " + (e.response?.data?.message || e.message), type: "error" });
-            setActionRequest(null);
-        }
+        actionMutation.mutate(actionRequest);
     };
 
     const getStatusStyle = (status) => {
@@ -70,7 +60,6 @@ const DamageRequests = () => {
 
     return (
         <div className="fade-in">
-            {alert && <Alert message={alert.message} type={alert.type} onClose={() => setAlert(null)} />}
 
             {/* Tabs */}
             <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border-color)', marginBottom: '1.5rem' }}>

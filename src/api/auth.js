@@ -1,10 +1,17 @@
-import api from './axiosInstance';
+import axios from './axiosInstance';
 
 export const login = async (username, password) => {
+    const response = await axios.post('/auth/login',
+        { username, password },
+        { headers: { 'Content-Type': 'application/json' } }
+    );
+    return response.data;
+};
+
+export const logout = async () => {
     try {
-        const response = await api.post('/auth/login', { username, password });
-        return response.data;
+        await axios.post('/auth/logout', {});
     } catch (error) {
-        throw error;
+        console.error("Logout failed", error);
     }
 };

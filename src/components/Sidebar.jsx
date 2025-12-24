@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, ShoppingCart, Package, DollarSign, Settings, BarChart2, Bell, UserCog, ChevronDown, LogOut } from 'lucide-react';
 import Modal from './Modal';
-import { fetchProducts } from '../api/products';
+import { useProducts } from '../api/products';
+import { usePendingReturns } from '../api/returns';
+import { logout } from '../api/auth';
 
 import logo from '../assets/nk_logo.png';
 
@@ -15,11 +17,16 @@ const Sidebar = () => {
     const location = useLocation();
     const navigate = useNavigate();
 
+    // Use Custom Hook for polling
+    const { data: products = [] } = useProducts();
+    const { data: pendingReturns = [] } = usePendingReturns(role === 'OWNER' ? null : localStorage.getItem('storeId'));
+
     const handleLogoutClick = () => {
         setIsLogoutModalOpen(true);
     };
 
-    const confirmLogout = () => {
+    const confirmLogout = async () => {
+        await logout();
         localStorage.removeItem('token');
         localStorage.removeItem('role');
         localStorage.removeItem('storeId');
@@ -27,22 +34,67 @@ const Sidebar = () => {
     };
 
     useEffect(() => {
-        const loadNotifications = async () => {
-            try {
-                const data = await fetchProducts();
-                const lowStockCount = data.filter(p => p.stock <= 10).length;
-                // Add 1 for the system welcome message
-                setNotificationCount(lowStockCount + 1);
-            } catch (error) {
-                console.error("Error fetching notifications for sidebar", error);
+        const updateCount = () => {
+            const data = products || [];
+            // Get read notifications from local storage
+            let readNotifs = JSON.parse(localStorage.getItem('read_notifications') || '[]');
+            let hasChanges = false;
+
+            // 1. Clean up "read" status for items that are no longer low on stock
+            // This ensures if they go low again, they show up as new notifications
+            data.forEach(item => {
+                const notifId = `low-stock-${item.id}`;
+                if (item.stock > 10 && readNotifs.includes(notifId)) {
+                    readNotifs = readNotifs.filter(id => id !== notifId);
+                    hasChanges = true;
+                }
+            });
+
+            if (hasChanges) {
+                localStorage.setItem('read_notifications', JSON.stringify(readNotifs));
             }
+
+            // 2. Calculate unread low stock alerts
+            let unreadCount = 0;
+
+            // Low Stock
+            const lowStockItems = data.filter(p => p.stock <= 10);
+            lowStockItems.forEach(item => {
+                const notifId = `low-stock-${item.id}`;
+                if (!readNotifs.includes(notifId)) {
+                    unreadCount++;
+                }
+            });
+
+            // System Welcome Message (id: 'sys-welcome')
+            if (!readNotifs.includes('sys-welcome')) {
+                unreadCount++;
+            }
+
+            // Pending Return Requests (Action Items)
+            if (role !== 'CASHIER') {
+                pendingReturns.forEach(req => {
+                    if (!readNotifs.includes(`return-${req.id}`)) {
+                        unreadCount++;
+                    }
+                });
+            }
+
+            setNotificationCount(unreadCount);
         };
 
-        loadNotifications();
-        // Poll every minute to keep updated
-        const interval = setInterval(loadNotifications, 60000);
-        return () => clearInterval(interval);
-    }, []);
+        updateCount();
+
+        // Listen both for storage updates and custom events for instant sidebar update
+        const handleUpdate = () => updateCount();
+        window.addEventListener('storage', handleUpdate);
+        window.addEventListener('notificationStateChanged', handleUpdate);
+
+        return () => {
+            window.removeEventListener('storage', handleUpdate);
+            window.removeEventListener('notificationStateChanged', handleUpdate);
+        };
+    }, [products, pendingReturns]);
 
     return (
         <div className="sidebar">
@@ -159,7 +211,7 @@ const Sidebar = () => {
 
             </nav>
             <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid var(--border-color)', fontSize: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                Developed by <span style={{ color: 'var(--warning)' }}>Dhammika Prasad</span>
+                Developed by <a href="https://dhammika-prasad.vercel.app/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--warning)', textDecoration: 'none' }}>Dhammika Prasad</a>
             </div>
 
             <Modal

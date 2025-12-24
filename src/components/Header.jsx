@@ -59,7 +59,7 @@ const Header = () => {
                     <div style={{ marginLeft: '1rem', position: 'relative', display: 'inline-block' }}>
                         <select
                             value={selectedStoreId}
-                            onChange={(e) => setSelectedStoreId(e.target.value)}
+                            onChange={(e) => setSelectedStoreId(Number(e.target.value))}
                             style={{
                                 appearance: 'none',
                                 WebkitAppearance: 'none',

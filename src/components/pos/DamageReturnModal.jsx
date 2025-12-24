@@ -6,7 +6,7 @@ import { fetchSaleById } from '../../api/sales';
 import { createReturnRequest, fetchReturnsBySale, issueReturnVoucher } from '../../api/returns';
 import { printVoucher } from '../../templates/VoucherTemplate';
 
-const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId }) => {
+const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId, onVoucherIssued }) => {
     const [returnBillId, setReturnBillId] = useState('');
     const [returnSaleData, setReturnSaleData] = useState(null);
     const [existingRequests, setExistingRequests] = useState([]);
@@ -20,6 +20,7 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId }) => {
     const [createdVoucher, setCreatedVoucher] = useState(null);
     const [showConfirm, setShowConfirm] = useState(false);
     const [confirmAction, setConfirmAction] = useState(null); // 'REQUEST' or 'ISSUE'
+    const [localError, setLocalError] = useState(null);
 
     // Effect to auto-load bill if provided
     React.useEffect(() => {
@@ -31,20 +32,35 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId }) => {
 
     const findBill = async (id) => {
         if (!id) return;
+        setLocalError(null);
         try {
             const sale = await fetchSaleById(id);
             if (sale) {
                 // Check policy logic if needed
+                // Frontend 3-Day Expiry Check
+                const saleDate = new Date(sale.saleDate);
+                const threeDaysAgo = new Date();
+                threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+
+                if (saleDate < threeDaysAgo) {
+                    const msg = `Return period expired (Limit: 3 Days). Sale Date: ${saleDate.toLocaleDateString()}`;
+                    setLocalError(msg);
+                    showAlert(msg, "error");
+                    return;
+                }
+
                 setReturnSaleData(sale);
                 loadRequests(sale.id);
                 setReturnSelection({});
                 setIssueSelection({});
                 // setReturnBillId(id); // Already set if coming from input or prop
             } else {
+                setLocalError("Bill not found.");
                 showAlert("Bill not found.");
             }
         } catch (e) {
             console.error(e);
+            setLocalError("Error fetching bill.");
             showAlert("Error fetching bill.");
         }
     };
@@ -88,7 +104,9 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId }) => {
             setShowConfirm(false);
         } catch (e) {
             console.error(e);
-            showAlert("Request Failed: " + (e.response?.data?.message || e.message), "error");
+            const data = e.response?.data;
+            const msg = (typeof data === 'string' ? data : data?.message) || e.message;
+            showAlert("Request Failed: " + msg, "error");
             setShowConfirm(false);
         }
     };
@@ -104,6 +122,7 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId }) => {
         try {
             const voucher = await issueReturnVoucher(idsToIssue);
             setCreatedVoucher(voucher);
+            if (onVoucherIssued) onVoucherIssued(voucher);
             showAlert("Voucher Issued Successfully!", "success");
             loadRequests(returnSaleData.id);
             setShowConfirm(false);
@@ -136,6 +155,11 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId }) => {
                         <>
                             <div style={{ marginBottom: '1rem' }}>
                                 <label style={{ display: 'block', marginBottom: '0.5rem' }}>Find Bill to Process</label>
+                                {localError && (
+                                    <div style={{ color: 'var(--danger)', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                                        {localError}
+                                    </div>
+                                )}
                                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                                     <input
                                         type="number"

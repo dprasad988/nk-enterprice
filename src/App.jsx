@@ -15,6 +15,7 @@ import Users from './pages/Users';
 import DamageRequests from './pages/DamageRequests';
 import { StoreProvider } from './context/StoreContext';
 import './styles.css';
+import { useIdleTimer } from './hooks/useIdleTimer';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
     const token = localStorage.getItem('token');
@@ -52,6 +53,17 @@ const Layout = () => {
     const token = localStorage.getItem('token');
     const role = localStorage.getItem('role');
     const isLoggedIn = !!token;
+
+    useIdleTimer({
+        timeout: 36000000, // 10 Hours (Matches Token Expiry)
+        onIdle: () => {
+            localStorage.removeItem('token');
+            localStorage.removeItem('role');
+            localStorage.removeItem('storeId');
+            window.location.href = '/login';
+        },
+        isActive: isLoggedIn
+    });
 
     // Strict Redirect for Cashiers to prevent "Flash" of Dashboard
     if (isLoggedIn && role === 'CASHIER') {
@@ -128,12 +140,17 @@ const Layout = () => {
     );
 };
 
+
+import { AlertProvider } from './context/AlertContext';
+
 function App() {
     return (
         <StoreProvider>
-            <Router>
-                <Layout />
-            </Router>
+            <AlertProvider>
+                <Router>
+                    <Layout />
+                </Router>
+            </AlertProvider>
         </StoreProvider>
     );
 }

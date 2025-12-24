@@ -21,14 +21,24 @@ export const StoreProvider = ({ children }) => {
                     const data = await fetchStores();
                     console.log("[StoreContext] Loaded Stores:", data);
                     setStores(data);
+                    // Only auto-select if not already set (or valid)
                     if (data.length > 0) {
-                        console.log("[StoreContext] Selecting first store:", data[0].id);
-                        setSelectedStoreId(data[0].id);
-                    } else {
-                        console.warn("[StoreContext] No stores found for owner.");
+                        const saved = localStorage.getItem('selectedStoreId');
+                        if (saved) setSelectedStoreId(Number(saved));
+                        else setSelectedStoreId(data[0].id);
                     }
                 } catch (error) {
                     console.error("Failed to load stores", error);
+                }
+            } else {
+                // For ADMIN / CASHIER, use the store bound to their account
+                const myStoreId = localStorage.getItem('storeId');
+                const myStoreName = localStorage.getItem('storeName');
+                if (myStoreId) {
+                    setSelectedStoreId(Number(myStoreId));
+                    if (myStoreName) {
+                        setStores([{ id: Number(myStoreId), name: myStoreName }]);
+                    }
                 }
             }
             setLoading(false);

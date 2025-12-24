@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import Modal from '../Modal';
 import { fetchExchangeableSaleById } from '../../api/sales'; // Adjust path
 
-const RetrieveBillModal = ({ isOpen, onClose, onRetrieve }) => {
+const RetrieveBillModal = ({ isOpen, onClose, onRetrieve, showAlert }) => {
     const [retrieveId, setRetrieveId] = useState('');
     const [error, setError] = useState(null);
 
@@ -12,7 +12,9 @@ const RetrieveBillModal = ({ isOpen, onClose, onRetrieve }) => {
         try {
             const sale = await fetchExchangeableSaleById(retrieveId);
             if (!sale) {
-                setError("Bill not found.");
+                const msg = "Bill not found.";
+                setError(msg);
+                if (showAlert) showAlert(msg, "error");
                 return;
             }
             onRetrieve(sale);
@@ -20,8 +22,10 @@ const RetrieveBillModal = ({ isOpen, onClose, onRetrieve }) => {
             setRetrieveId('');
         } catch (e) {
             console.error(e);
-            const msg = e.response?.data?.message || e.message || "Error fetching bill.";
+            const data = e.response?.data;
+            const msg = (typeof data === 'string' ? data : data?.message) || e.message || "Error fetching bill.";
             setError(msg);
+            if (showAlert) showAlert(msg, "error");
         }
     };
 

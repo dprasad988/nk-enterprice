@@ -1,4 +1,5 @@
 import api from './axiosInstance';
+import { useQuery } from '@tanstack/react-query';
 
 export const fetchProducts = async (storeId) => {
     const params = storeId ? { storeId } : {};
@@ -32,4 +33,24 @@ export const fetchProductLogs = async (params = {}) => {
     // params: { page, size, startDate, endDate }
     const response = await api.get('/products/logs', { params });
     return response.data;
+};
+
+// --- Custom Hooks ---
+
+export const useProducts = (storeId) => {
+    return useQuery({
+        queryKey: ['products', storeId],
+        queryFn: () => fetchProducts(storeId),
+        staleTime: 60000,
+        refetchInterval: 60000
+    });
+};
+
+export const useProductsPaged = (params = {}) => {
+    return useQuery({
+        queryKey: ['products', params.storeId, params.page, params.search],
+        queryFn: () => fetchProductsPaged(params),
+        placeholderData: (previousData) => previousData,
+        refetchInterval: 10000
+    });
 };

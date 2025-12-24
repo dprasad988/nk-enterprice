@@ -3,12 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Plus, Minus, Trash2, CreditCard, Banknote, CheckCircle, PauseCircle, Clock, PlayCircle, XCircle, Home, LogOut, FileSearch, RotateCcw, Monitor, Ticket, AlertTriangle, RefreshCw, Printer, Tag, Bell, ShoppingCart } from 'lucide-react';
 import { fetchVouchersBySaleId } from '../api/vouchers';
 import Modal from '../components/Modal';
-import Alert from '../components/Alert';
+// Alert component removed (using global)
 import { printReceipt } from '../templates/BillTemplate';
-import { fetchProductsPaged } from '../api/products';
-import { fetchSettingsMap } from '../api/settings';
+import { fetchProductsPaged, useProductsPaged } from '../api/products';
+import { fetchSettingsMap, useSettingsMap } from '../api/settings';
 import { createSale, updateSale } from '../api/sales';
-import { fetchApprovedReturns } from '../api/returns';
+import { fetchApprovedReturns, useApprovedReturns } from '../api/returns';
 import ProductLogsModal from '../components/products/ProductLogsModal'; // Import ProductLogsModal
 import CashPaymentModal from '../components/pos/CashPaymentModal';
 import VoucherPaymentModal from '../components/pos/VoucherPaymentModal';
@@ -16,17 +16,23 @@ import PaymentSuccessModal from '../components/pos/PaymentSuccessModal';
 import HeldSalesModal from '../components/pos/HeldSalesModal';
 import RetrieveBillModal from '../components/pos/RetrieveBillModal';
 import DamageReturnModal from '../components/pos/DamageReturnModal';
+import ClearCartModal from '../components/pos/ClearCartModal';
 import { useStore } from '../context/StoreContext';
+import { useAlert } from '../context/AlertContext';
 
 const POS = () => {
     const navigate = useNavigate();
     const { selectedStoreId, role } = useStore();
+    const { showAlert } = useAlert();
     const isOwner = role === 'OWNER';
     const isCashier = role === 'CASHIER';
     const [products, setProducts] = useState([]);
-    const [cart, setCart] = useState([]);
+    const [cart, setCart] = useState(() => {
+        const saved = localStorage.getItem('pos_cart');
+        return saved ? JSON.parse(saved) : [];
+    });
     const [searchTerm, setSearchTerm] = useState('');
-    const [loading, setLoading] = useState(false);
+    const [manualLoading, setManualLoading] = useState(false);
 
     // Partial Voucher State
     const [partialVoucher, setPartialVoucher] = useState(null); // { code, amount }
@@ -60,6 +66,8 @@ const POS = () => {
     const [returnDeduction, setReturnDeduction] = useState(0);
 
     const searchInputRef = useRef(null);
+    const discountInputRef = useRef(null);
+
 
     // Returns State
     const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
@@ -73,31 +81,29 @@ const POS = () => {
 
     const [discount, setDiscount] = useState(0);
     const [showDiscountInput, setShowDiscountInput] = useState(false);
-    const [posSettings, setPosSettings] = useState({});
-    const [notifications, setNotifications] = useState([]);
     const [showNotificationDropdown, setShowNotificationDropdown] = useState(false);
 
+    // TanStack Query Hooks
+    const { data: posSettings = {} } = useSettingsMap(selectedStoreId);
+    const { data: approvedReturns = [] } = useApprovedReturns(selectedStoreId);
+    const [notifications, setNotifications] = useState([]);
+
+    // Derive Notifications
     useEffect(() => {
-        const checkNotifications = async () => {
-            try {
-                const approved = await fetchApprovedReturns(selectedStoreId);
-                // Group by Sale ID
-                const grouped = approved.reduce((acc, item) => {
-                    acc[item.originalSaleId] = (acc[item.originalSaleId] || 0) + 1;
-                    return acc;
-                }, {});
+        if (showDiscountInput && discountInputRef.current) {
+            discountInputRef.current.focus();
+        }
+    }, [showDiscountInput]);
 
-                const notifList = Object.entries(grouped).map(([id, count]) => ({ saleId: id, count }));
-                setNotifications(notifList);
-            } catch (e) {
-                console.error("Failed to fetch notifications", e);
-            }
-        };
-
-        checkNotifications();
-        const interval = setInterval(checkNotifications, 15000); // 15 seconds
-        return () => clearInterval(interval);
-    }, [selectedStoreId]);
+    useEffect(() => {
+        if (!approvedReturns) return;
+        const grouped = approvedReturns.reduce((acc, item) => {
+            acc[item.originalSaleId] = (acc[item.originalSaleId] || 0) + 1;
+            return acc;
+        }, {});
+        const notifList = Object.entries(grouped).map(([id, count]) => ({ saleId: id, count }));
+        setNotifications(notifList);
+    }, [approvedReturns]);
 
     const handleNotificationClick = (saleId) => {
         setReturnBillId(saleId);
@@ -107,18 +113,6 @@ const POS = () => {
         setShowNotificationDropdown(false);
     };
 
-    useEffect(() => {
-        const loadSettings = async () => {
-            try {
-                const data = await fetchSettingsMap();
-                setPosSettings(data);
-            } catch (e) {
-                console.error("Failed to load POS settings", e);
-            }
-        };
-        loadSettings();
-    }, []);
-
     const subtotal = cart.reduce((sum, item) => {
         const itemPrice = item.discount ? item.price * (1 - item.discount / 100) : item.price;
         return sum + (itemPrice * item.quantity);
@@ -126,35 +120,57 @@ const POS = () => {
 
     const total = subtotal - (subtotal * (discount / 100));
 
-    // Initial Load
-    useEffect(() => {
-        loadProducts(1, '');
-    }, [selectedStoreId]);
+    // Products Query
+    const [debouncedSearch, setDebouncedSearch] = useState('');
 
-    // Debounced Search
     useEffect(() => {
         if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
-        // Only trigger search if it's NOT a potential barcode scan (wait for enter if it looks like barcode?)
-        // Actually, users might type name. Let's debounce normally.
-        // If user hits enter, we force immediate search in handleSearchSubmit.
-        if (searchTerm.trim()) {
-            debounceTimeout.current = setTimeout(() => {
-                setCurrentPage(1);
-                loadProducts(1, searchTerm);
-            }, 600); // 600ms debounce
-        } else {
-            debounceTimeout.current = setTimeout(() => {
-                setCurrentPage(1);
-                loadProducts(1, '');
-            }, 600);
+        const handler = setTimeout(() => {
+            setDebouncedSearch(searchTerm);
+            // setCurrentPage(1); // Moving this to setDebouncedSearch might cause double render? 
+            // Logic: If term changes, page should be 1. 
+            // But if I click page 2, term doesn't change.
+            // If I change term, page reset happens here.
+            // But wait, if I change term, debouncedSearch updates -> Query runs with P1.
+            // BUT currentPage state variable needs to be reset so UI shows Page 1.
+            // So yes, reset here.
+            if (searchTerm !== debouncedSearch) setCurrentPage(1);
+        }, 300);
+        debounceTimeout.current = handler;
+        return () => clearTimeout(handler);
+    }, [searchTerm]); // removed debouncedSearch dep to avoid loop
+
+    const { data: productData, isLoading: productsLoading, refetch } = useProductsPaged({
+        storeId: selectedStoreId,
+        page: currentPage - 1,
+        size: itemsPerPage,
+        search: debouncedSearch
+    });
+
+    useEffect(() => {
+        if (productData) {
+            if (currentPage === 1) {
+                setProducts(productData.content);
+            } else {
+                setProducts(prev => {
+                    const newItems = productData.content.filter(n => !prev.some(p => p.id === n.id));
+                    return [...prev, ...newItems];
+                });
+            }
+            setTotalPages(productData.totalPages);
+            setTotalItems(productData.totalElements);
         }
-        return () => clearTimeout(debounceTimeout.current);
-    }, [searchTerm]);
+    }, [productData, currentPage]);
 
     // Persist held sales
     useEffect(() => {
         localStorage.setItem('heldSales', JSON.stringify(heldSales));
     }, [heldSales]);
+
+    // Persist active cart (Safety for refresh/logout)
+    useEffect(() => {
+        localStorage.setItem('pos_cart', JSON.stringify(cart));
+    }, [cart]);
 
     const handleHoldSale = () => {
         if (cart.length === 0) {
@@ -193,46 +209,8 @@ const POS = () => {
         navigate('/login');
     };
 
-    const loadProducts = async (page = 1, search = '') => {
-        if (isOwner && !selectedStoreId) return;
-        setLoading(true);
-        try {
-            const params = {
-                storeId: selectedStoreId,
-                page: page - 1,
-                size: itemsPerPage,
-                search: search
-            };
-            const data = await fetchProductsPaged(params);
-            console.log("[POS] Loaded Page:", page, "Count:", data.content.length);
-
-            // If it's page 1, replace. If > 1, append? 
-            // For POS grid, appending is nice for "Load More".
-            if (page === 1) {
-                setProducts(data.content);
-            } else {
-                setProducts(prev => [...prev, ...data.content]);
-            }
-
-            setTotalPages(data.totalPages);
-            setTotalItems(data.totalElements);
-            setLoading(false);
-            return data.content; // Return for immediate use
-        } catch (error) {
-            console.error("Error fetching products", error);
-            setLoading(false);
-            return [];
-        }
-    };
-
-
-    const [alertMessage, setAlertMessage] = useState(null);
-    const [alertType, setAlertType] = useState('error');
-
-    const showAlert = (message, type = 'error') => {
-        setAlertMessage(message);
-        setAlertType(type);
-    };
+    // Define loading alias for render compatibility
+    const loading = productsLoading || manualLoading;
 
     const addToCart = (product) => {
         if (product.stock <= 0) {
@@ -259,30 +237,52 @@ const POS = () => {
     const handleSearchSubmit = async (e) => {
         if (e.key === 'Enter') {
             if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
-            const term = searchTerm.trim();
+            let term = searchTerm.trim();
             if (!term) return;
 
+            // Handle QR Code Scan (Barcode:::Name:::Price) - OLD
+            if (term.includes(':::')) {
+                const parts = term.split(':::');
+                term = parts[0];
+                setSearchTerm(term);
+            }
+            // Handle New Readable Format (Name | Price | Code: 123)
+            else if (term.includes(' | Code: ')) {
+                const parts = term.split(' | ');
+                const codePart = parts.find(p => p.startsWith('Code: '));
+                if (codePart) {
+                    term = codePart.replace('Code: ', '').trim();
+                    setSearchTerm(term);
+                }
+            }
+
             // Immediate API Search
-            const results = await loadProducts(1, term);
+            setManualLoading(true);
+            try {
+                const data = await fetchProductsPaged({
+                    storeId: selectedStoreId,
+                    page: 0,
+                    size: itemsPerPage,
+                    search: term
+                });
+                const results = data.content;
+                setManualLoading(false);
 
-            // Check exact barcode match
-            const exactMatch = results.find(p =>
-                String(p.barcode || '').toLowerCase() === term.toLowerCase()
-            );
+                // Check exact barcode match
+                const exactMatch = results.find(p =>
+                    String(p.barcode || '').toLowerCase() === term.toLowerCase()
+                );
 
-            if (exactMatch) {
-                addToCart(exactMatch);
-                setSearchTerm('');
-                // Optionally reload default list? Or keep search result?
-                // Keeping search result effectively "filters" to that item.
-                // Maybe better to clear if it was a successful scan.
-                loadProducts(1, '');
-            } else if (results.length === 1) {
-                // If only 1 result found (maybe by name), add it?
-                // Often safer to just show it. But for speed:
-                // addToCart(results[0]); 
-                // setSearchTerm('');
-                // loadProducts(1, '');
+                if (exactMatch) {
+                    addToCart(exactMatch);
+                    setSearchTerm(''); // Clear search to reset grid
+                } else {
+                    // Just ensure term is set so List updates (via debounce/state)
+                    setSearchTerm(term);
+                }
+            } catch (err) {
+                console.error(err);
+                setManualLoading(false);
             }
         }
     };
@@ -430,7 +430,7 @@ const POS = () => {
                 setPartialVoucher(null); // Reset partial
                 showAlert("Sale Completed Successfully", "success");
             }
-            await loadProducts(1, '');
+            await refetch();
         } catch (error) {
             console.error("Sale Error:", error);
             showAlert("Failed to process sale. Please try again.", "error");
@@ -466,13 +466,32 @@ const POS = () => {
 
 
 
+
+    const [isCartIconHovered, setIsCartIconHovered] = useState(false);
+    const [isClearCartModalOpen, setIsClearCartModalOpen] = useState(false);
+
+    const handleClearCart = () => {
+        if (cart.length === 0) return;
+        setIsClearCartModalOpen(true);
+    };
+
+    const confirmClearCart = () => {
+        setCart([]);
+        setDiscount(0);
+        setPartialVoucher(null);
+        // If editing, clear edit state too
+        if (editingSaleId) {
+            setEditingSaleId(null);
+            setOriginalSaleTotal(0);
+            setReturnDeduction(0);
+            setExchangeVouchers([]);
+        }
+        setIsClearCartModalOpen(false);
+        showAlert("Cart Cleared", "success");
+    };
+
     return (
         <div className="layout" style={{ height: '100vh', gap: '1rem', padding: '1rem' }}>
-            {/* Custom Alert Toast */}
-            <Alert message={alertMessage} type={alertType} onClose={() => setAlertMessage(null)} />
-
-
-
             {/* Product Grid */}
             <div style={{ flex: 3, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div className="card" style={{ padding: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
@@ -507,7 +526,7 @@ const POS = () => {
                             style={{ paddingLeft: '2.8rem', fontSize: '1.1rem', width: '100%' }}
                         />
                     </div>
-                </div>
+                </div >
 
                 <div className="custom-scrollbar" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', overflowY: 'auto', paddingRight: '0.5rem' }}>
                     {displayedProducts.map(product => (
@@ -546,7 +565,7 @@ const POS = () => {
                                 onClick={() => {
                                     const nextPage = currentPage + 1;
                                     setCurrentPage(nextPage);
-                                    loadProducts(nextPage, searchTerm);
+                                    setCurrentPage(nextPage);
                                 }}
                                 style={{ width: '100%', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
                             >
@@ -555,13 +574,30 @@ const POS = () => {
                         </div>
                     )}
                 </div>
-            </div>
+            </div >
 
             {/* Cart / Receipt */}
             <div className="card" style={{ flex: 2, display: 'flex', flexDirection: 'column', padding: '0' }}>
                 <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <ShoppingCart size={36} />
+                        <div
+                            style={{
+                                cursor: cart.length > 0 ? 'pointer' : 'default',
+                                transition: 'transform 0.3s ease-in-out',
+                                transform: isCartIconHovered && cart.length > 0 ? 'rotateY(180deg)' : 'rotateY(0deg)',
+                                display: 'inline-block'
+                            }}
+                            onMouseEnter={() => setIsCartIconHovered(true)}
+                            onMouseLeave={() => setIsCartIconHovered(false)}
+                            onClick={handleClearCart}
+                            title={cart.length > 0 ? "Clear Cart" : "Cart is Empty"}
+                        >
+                            {isCartIconHovered && cart.length > 0 ? (
+                                <Trash2 size={36} color="var(--danger)" />
+                            ) : (
+                                <ShoppingCart size={36} />
+                            )}
+                        </div>
                         {editingSaleId && <h2 style={{ fontSize: '1.2rem', fontWeight: 'bold', margin: 0 }}>Editing #{editingSaleId}</h2>}
                         {editingSaleId && (
                             <button className="btn" onClick={handleCancelEdit} style={{ fontSize: '0.8rem', backgroundColor: 'var(--danger)', color: 'white', padding: '0.2rem 0.5rem' }}>
@@ -576,7 +612,7 @@ const POS = () => {
 
                         <button
                             className="btn"
-                            onClick={() => { setRetrieveId(''); setIsRetrieveModalOpen(true); }}
+                            onClick={handleRetrieveClick}
                             title="Retrieve Bill for Exchange (Item to Item)"
                             style={{ border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem' }}
                         >
@@ -721,7 +757,14 @@ const POS = () => {
                                 {subtotal >= (parseFloat(posSettings['discount_min_bill_amount']) || 10000) && !editingSaleId && (
                                     <button
                                         className="btn"
-                                        onClick={() => setShowDiscountInput(!showDiscountInput)}
+                                        onClick={() => {
+                                            if (showDiscountInput || discount > 0) {
+                                                setDiscount(0);
+                                                setShowDiscountInput(false);
+                                            } else {
+                                                setShowDiscountInput(true);
+                                            }
+                                        }}
                                         style={{
                                             padding: '0.5rem',
                                             borderRadius: '50%',
@@ -744,6 +787,7 @@ const POS = () => {
                                     Discount (Max {parseFloat(posSettings['discount_max_percent']) || 0}%):
                                 </span>
                                 <input
+                                    ref={discountInputRef}
                                     type="number"
                                     min="0"
                                     max="100"
@@ -831,20 +875,46 @@ const POS = () => {
                                     </div>
                                 )}
 
-                                <button
-                                    className="btn btn-primary"
-                                    onClick={() => amountToPay === 0 ? handleCheckout('CASH', 0) : handleCashClick()}
-                                    disabled={amountToPay < 0}
-                                    style={{
-                                        width: '100%',
-                                        display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem',
-                                        backgroundColor: total >= originalSaleTotal ? 'var(--warning)' : 'var(--bg-tertiary)',
-                                        color: total >= (originalSaleTotal - returnDeduction) ? 'black' : 'var(--text-secondary)',
-                                        cursor: (amountToPay >= 0) ? 'pointer' : 'not-allowed'
-                                    }}
-                                >
-                                    <RotateCcw size={20} /> {editingSaleId ? 'UPDATE BILL' : 'PAY REMAINING (CASH)'}
-                                </button>
+                                {amountToPay > 0 ? (
+                                    <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
+                                        <button
+                                            className="btn btn-primary"
+                                            onClick={handleCashClick}
+                                            style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem' }}
+                                        >
+                                            <Banknote size={18} /> CASH
+                                        </button>
+                                        <button
+                                            className="btn"
+                                            onClick={() => handleCheckout('CARD')}
+                                            style={{ flex: 1, backgroundColor: '#8b5cf6', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem' }}
+                                        >
+                                            <CreditCard size={18} /> CARD
+                                        </button>
+                                        <button
+                                            className="btn"
+                                            onClick={() => setIsVoucherModalOpen(true)}
+                                            style={{ flex: 1, backgroundColor: 'var(--accent-color)', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem' }}
+                                        >
+                                            <Ticket size={18} /> VOUCHER
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={() => handleCheckout('CASH', 0)}
+                                        disabled={amountToPay < 0}
+                                        style={{
+                                            width: '100%',
+                                            display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem',
+                                            backgroundColor: total >= originalSaleTotal ? 'var(--warning)' : 'var(--bg-tertiary)',
+                                            color: total >= (originalSaleTotal - returnDeduction) ? 'black' : 'var(--text-secondary)',
+                                            cursor: (amountToPay >= 0) ? 'pointer' : 'not-allowed'
+                                        }}
+                                    >
+                                        <RotateCcw size={20} /> UPDATE BILL
+                                    </button>
+                                )}
                             </div>
                         ) : (
                             <>
@@ -864,7 +934,7 @@ const POS = () => {
                         )}
                     </div>
                 </div>
-            </div>
+            </div >
 
             {/* Cash Payment Modal */}
             <CashPaymentModal
@@ -877,7 +947,14 @@ const POS = () => {
                 onPaymentComplete={handleCashPaymentComplete}
             />
 
-            {/* Success Modal */}
+            {/* Clear Cart Confirmation Modal */}
+            <ClearCartModal
+                isOpen={isClearCartModalOpen}
+                onClose={() => setIsClearCartModalOpen(false)}
+                onConfirm={confirmClearCart}
+                itemCount={cart.reduce((acc, item) => acc + item.quantity, 0)}
+            />
+
             {/* Success Modal */}
             <PaymentSuccessModal
                 isOpen={isSuccessModalOpen}
@@ -934,21 +1011,25 @@ const POS = () => {
                 </div>
             </Modal>
 
-
             {/* Retrieve Bill Modal */}
             <RetrieveBillModal
                 isOpen={isRetrieveModalOpen}
                 onClose={() => setIsRetrieveModalOpen(false)}
                 onRetrieve={handleBillRetrieved}
+                showAlert={showAlert}
             />
 
-            {/* Return Processing Modal */}
             {/* Return Processing Modal */}
             <DamageReturnModal
                 isOpen={isReturnModalOpen}
                 onClose={() => setIsReturnModalOpen(false)}
                 showAlert={showAlert}
                 initialBillId={returnBillId}
+                onVoucherIssued={(voucher) => {
+                    // Manual Apply: Add to available exchange vouchers list
+                    setExchangeVouchers(prev => [...prev, { ...voucher, currentBalance: voucher.amount }]);
+                    showAlert("Voucher Issued! You can now apply it to this bill.", "success");
+                }}
             />
 
             {/* Voucher Payment Modal */}
@@ -966,7 +1047,6 @@ const POS = () => {
                     showAlert(`Voucher Applied. Balance Due: Rs. ${(total - amount).toFixed(2)}`);
                 }}
             />
-
         </div>
     );
 };

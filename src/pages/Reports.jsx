@@ -4,7 +4,9 @@ import { DollarSign, Package, AlertTriangle, Calendar } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { fetchSales } from '../api/sales';
 import { fetchProducts } from '../api/products';
+import { useProfitSummary } from '../api/reports'; // Import the new hook
 import { useStore } from '../context/StoreContext';
+import DailySalesTable from '../components/reports/DailySalesTable';
 
 const Reports = () => {
     const { selectedStoreId, role } = useStore();
@@ -25,9 +27,14 @@ const Reports = () => {
         return `${year}-${month}-${day}`;
     };
 
+    // Load Data for Sales/Stock Tabs (Client-side mostly)
     useEffect(() => {
-        fetchData();
-    }, [selectedStoreId]);
+        if (activeTab === 'sales' || activeTab === 'stock' || activeTab === 'lowstock') {
+            fetchData();
+        } else {
+            setLoading(false); // If other tabs, simpler loading state
+        }
+    }, [selectedStoreId, activeTab]);
 
     useEffect(() => {
         const tab = searchParams.get('tab');
@@ -35,7 +42,8 @@ const Reports = () => {
     }, [searchParams]);
 
     const fetchData = async () => {
-        if (isOwner && !selectedStoreId) return;
+        if (isOwner && !selectedStoreId) return; // Wait for store selection if owner
+        setLoading(true);
         try {
             const storeFilter = selectedStoreId;
             const [salesData, productsData] = await Promise.all([
@@ -53,7 +61,7 @@ const Reports = () => {
 
     const [salesGraphFilter, setSalesGraphFilter] = useState('last7days');
 
-    // --- Sales Logic ---
+    // --- Sales Logic (Client Side for now) ---
     const getSalesData = () => {
         let dataPoints = [];
 
@@ -122,131 +130,13 @@ const Reports = () => {
     // --- Stock Logic ---
     const lowStockItems = products.filter(p => p.stock <= p.alertLevel);
     const totalStockValue = products.reduce((sum, p) => sum + (p.stock * p.price), 0);
-    const totalCostValue = products.reduce((sum, p) => sum + (p.stock * p.costPrice), 0);
 
+    // --- Profit Logic (Server Side) ---
     const [profitGraphFilter, setProfitGraphFilter] = useState('last7days');
 
-    // --- Profit Logic ---
-    const getProfitData = () => {
-        const productCostMap = {};
-        products.forEach(p => productCostMap[p.id] = p.costPrice || 0);
+    // Fetch Profit Data from Backend
+    const { data: profitReport, isLoading: isProfitLoading } = useProfitSummary(selectedStoreId, profitGraphFilter);
 
-        let dataPoints = [];
-        const today = new Date();
-
-        if (profitGraphFilter === 'last7days') {
-            dataPoints = new Array(7).fill(0).map((_, i) => {
-                return getLocalDateString(i);
-            }).reverse().map(date => ({
-                name: date.slice(5),
-                fullDate: date // keep full date for filtering
-            }));
-        } else if (profitGraphFilter === 'last4weeks') {
-            // Actually user asked for "Weekly" - usually last 4-8 weeks. Let's do last 5 weeks for clean graph
-            dataPoints = new Array(5).fill(0).map((_, i) => {
-                const d = new Date();
-                d.setDate(d.getDate() - (i * 7));
-                // Get start of week (Sunday)
-                const day = d.getDay();
-                const diff = d.getDate() - day; // adjust when day is sunday
-                const weekStart = new Date(d.setDate(diff));
-                const isoStr = weekStart.toISOString().split('T')[0];
-                return { name: `Week ${isoStr.slice(5)}`, fullDate: isoStr, type: 'week' };
-            }).reverse();
-        } else if (profitGraphFilter === 'last12months') {
-            dataPoints = new Array(12).fill(0).map((_, i) => {
-                const d = new Date();
-                d.setMonth(d.getMonth() - i);
-                const monthStr = d.toISOString().slice(0, 7); // YYYY-MM
-                return { name: monthStr, fullDate: monthStr, type: 'month' };
-            }).reverse();
-        } else if (profitGraphFilter === 'last5years') {
-            dataPoints = new Array(5).fill(0).map((_, i) => {
-                const d = new Date();
-                d.setFullYear(d.getFullYear() - i);
-                const yearStr = d.getFullYear().toString();
-                return { name: yearStr, fullDate: yearStr, type: 'year' };
-            }).reverse();
-        }
-
-        const chartData = dataPoints.map(point => {
-            let periodProfit = 0;
-
-            // Filter sales matching the period
-            const matchingSales = sales.filter(s => {
-                if (profitGraphFilter === 'last7days') {
-                    return s.saleDate.startsWith(point.fullDate);
-                } else if (profitGraphFilter === 'last4weeks') {
-                    // Check if saleDate falls in that week
-                    // Simple hack: check if sale date is between weekStart and weekStart+7
-                    // But easier: new Date(s.saleDate) >= new Date(point.fullDate) && < +7 days
-                    const saleDate = new Date(s.saleDate);
-                    const weekStart = new Date(point.fullDate);
-                    const weekEnd = new Date(weekStart);
-                    weekEnd.setDate(weekEnd.getDate() + 7);
-                    return saleDate >= weekStart && saleDate < weekEnd;
-                } else if (profitGraphFilter === 'last12months') {
-                    return s.saleDate.startsWith(point.fullDate);
-                } else if (profitGraphFilter === 'last5years') {
-                    return s.saleDate.startsWith(point.fullDate);
-                }
-                return false;
-            });
-
-            matchingSales.forEach(sale => {
-                if (sale.items) {
-                    sale.items.forEach(item => {
-                        const cost = productCostMap[item.productId] || 0;
-                        periodProfit += (item.price - cost) * item.quantity;
-                    });
-                }
-            });
-            return { name: point.name, profit: periodProfit };
-        });
-
-        return chartData;
-    };
-
-    const calculateProfit = (period) => {
-        const productCostMap = {};
-        products.forEach(p => productCostMap[p.id] = p.costPrice || 0);
-
-        let filteredSales = [];
-        const today = new Date(); // Keep for object reference if needed, but strings are better
-
-        if (period === 'today') {
-            const dateStr = getLocalDateString(0);
-            filteredSales = sales.filter(s => s.saleDate.startsWith(dateStr));
-        } else if (period === 'week') {
-            // Simple check: is date >= 7 days ago?
-            // Converting saleDate string to Date object might assume UTC if "T" present without offset.
-            // But usually "YYYY-MM-DDTHH:mm:ss" is treated as Local by Date.parse() in some browsers, or UTC in others.
-            // Safe bet: Match string prefixes or simple compare if format is standard.
-            // Let's rely on string compare for simple "last 7 days" ranges? No. 
-            // Parsing:
-            const weekAgo = new Date();
-            weekAgo.setDate(weekAgo.getDate() - 7);
-
-            filteredSales = sales.filter(s => new Date(s.saleDate) >= weekAgo);
-        } else if (period === 'month') {
-            const monthStr = getLocalDateString(0).slice(0, 7); // YYYY-MM
-            filteredSales = sales.filter(s => s.saleDate.startsWith(monthStr));
-        } else if (period === 'year') {
-            const yearStr = getLocalDateString(0).slice(0, 4);
-            filteredSales = sales.filter(s => s.saleDate.startsWith(yearStr));
-        }
-
-        let totalProfit = 0;
-        filteredSales.forEach(sale => {
-            if (sale.items) {
-                sale.items.forEach(item => {
-                    const cost = productCostMap[item.productId] || 0;
-                    totalProfit += (item.price - cost) * item.quantity;
-                });
-            }
-        });
-        return totalProfit;
-    };
 
     const renderSalesTab = () => (
         <div className="space-y-6">
@@ -421,64 +311,69 @@ const Reports = () => {
         </div>
     );
 
-    const renderProfitTab = () => (
-        <div className="space-y-6">
-            <div className="grid grid-cols-4" style={{ gap: '1rem', marginBottom: '2rem' }}>
-                <div className="card">
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Today's Profit</div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--accent-color)' }}>
-                        Rs. {calculateProfit('today').toFixed(2)}
-                    </div>
-                </div>
-                <div className="card">
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Weekly Profit</div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--success)' }}>
-                        Rs. {calculateProfit('week').toFixed(2)}
-                    </div>
-                </div>
-                <div className="card">
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Monthly Profit</div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--accent-color)' }}>
-                        Rs. {calculateProfit('month').toFixed(2)}
-                    </div>
-                </div>
-                <div className="card">
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Yearly Profit</div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--accent-color)' }}>
-                        Rs. {calculateProfit('year').toFixed(2)}
-                    </div>
-                </div>
-            </div>
+    const renderProfitTab = () => {
+        if (isProfitLoading) return <div className="p-4 text-center">Loading profit data...</div>;
+        if (!profitReport) return <div className="p-4 text-center text-red-500">Failed to load profit data</div>;
 
-            <div className="card" style={{ height: '400px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                    <h3 style={{ margin: 0 }}>Profit Trends</h3>
-                    <select
-                        value={profitGraphFilter}
-                        onChange={(e) => setProfitGraphFilter(e.target.value)}
-                        style={{ width: 'auto', padding: '0.4rem', fontSize: '0.9rem' }}
-                    >
-                        <option value="last7days">Last 7 Days</option>
-                        <option value="last4weeks">Last 5 Weeks</option>
-                        <option value="last12months">Last 12 Months</option>
-                        <option value="last5years">Last 5 Years</option>
-                    </select>
+        return (
+            <div className="space-y-6">
+                <div className="grid grid-cols-4" style={{ gap: '1rem', marginBottom: '2rem' }}>
+                    <div className="card">
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Today's Profit</div>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--accent-color)' }}>
+                            Rs. {profitReport.todayProfit?.toFixed(2)}
+                        </div>
+                    </div>
+                    <div className="card">
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Weekly Profit (Last 7 Days)</div>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--success)' }}>
+                            Rs. {profitReport.weeklyProfit?.toFixed(2)}
+                        </div>
+                    </div>
+                    <div className="card">
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Monthly Profit</div>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--accent-color)' }}>
+                            Rs. {profitReport.monthlyProfit?.toFixed(2)}
+                        </div>
+                    </div>
+                    <div className="card">
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Yearly Profit</div>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--accent-color)' }}>
+                            Rs. {profitReport.yearlyProfit?.toFixed(2)}
+                        </div>
+                    </div>
                 </div>
-                <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={getProfitData()}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-                        <XAxis dataKey="name" stroke="var(--text-secondary)" />
-                        <YAxis stroke="var(--text-secondary)" />
-                        <Tooltip
-                            contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}
-                            itemStyle={{ color: 'var(--text-primary)' }}
-                        />
-                        <Bar dataKey="profit" fill="var(--success)" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                </ResponsiveContainer>
+
+                <div className="card" style={{ height: '400px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                        <h3 style={{ margin: 0 }}>Profit Trends</h3>
+                        <select
+                            value={profitGraphFilter}
+                            onChange={(e) => setProfitGraphFilter(e.target.value)}
+                            style={{ width: 'auto', padding: '0.4rem', fontSize: '0.9rem' }}
+                        >
+                            <option value="last7days">Last 7 Days</option>
+                            <option value="last4weeks">Last 5 Weeks</option>
+                            <option value="last12months">Last 12 Months</option>
+                            <option value="last5years">Last 5 Years</option>
+                        </select>
+                    </div>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={profitReport.chartData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                            <XAxis dataKey="name" stroke="var(--text-secondary)" />
+                            <YAxis stroke="var(--text-secondary)" />
+                            <Tooltip
+                                contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}
+                                itemStyle={{ color: 'var(--text-primary)' }}
+                            />
+                            <Bar dataKey="profit" fill="var(--success)" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                    </ResponsiveContainer>
+                </div>
             </div>
-        </div>
-    );
+        );
+    };
 
     return (
         <div>
@@ -489,7 +384,13 @@ const Reports = () => {
                         className={`btn ${activeTab === 'sales' ? 'btn-primary' : ''}`}
                         onClick={() => setActiveTab('sales')}
                     >
-                        Sales
+                        General Sales
+                    </button>
+                    <button
+                        className={`btn ${activeTab === 'dailysales' ? 'btn-primary' : ''}`}
+                        onClick={() => setActiveTab('dailysales')}
+                    >
+                        Daily Detailed
                     </button>
                     <button
                         className={`btn ${activeTab === 'stock' ? 'btn-primary' : ''}`}
@@ -512,9 +413,10 @@ const Reports = () => {
                 </div>
             </div>
 
-            {loading ? <p>Loading data...</p> : (
+            {loading && activeTab !== 'profit' ? <p>Loading data...</p> : (
                 <>
                     {activeTab === 'sales' && renderSalesTab()}
+                    {activeTab === 'dailysales' && <DailySalesTable />}
                     {activeTab === 'stock' && renderStockTab()}
                     {activeTab === 'lowstock' && renderLowStockTab()}
                     {activeTab === 'profit' && renderProfitTab()}

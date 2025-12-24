@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { DollarSign, ShoppingCart, AlertTriangle, Package, TrendingUp } from 'lucide-react';
-import { fetchDashboardStats } from '../api/dashboard';
+import { useDashboardStats } from '../api/dashboard';
 import { useStore } from '../context/StoreContext';
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
@@ -23,47 +23,24 @@ const Dashboard = () => {
     const { selectedStoreId, stores, role } = useStore();
     const isOwner = role === 'OWNER';
 
-    const [stats, setStats] = useState({
-        totalSales: 0,
-        totalProfit: 0,
-        orders: 0,
-        lowStock: 0,
-        totalProducts: 0,
-        storeCount: 0
-    });
-    const [chartData, setChartData] = useState([]);
-    const [storePerformanceData, setStorePerformanceData] = useState([]);
-    const [topProducts, setTopProducts] = useState([]);
-    const [loading, setLoading] = useState(true);
+    // TanStack Query
+    const { data: dashboardData, isLoading } = useDashboardStats(
+        selectedStoreId !== 'ALL' ? selectedStoreId : undefined
+    );
 
-    useEffect(() => {
-        fetchDashboardData();
-    }, [selectedStoreId, stores]); // Re-fetch when store selection changes
-
-    const fetchDashboardData = async () => {
-        if (isOwner && !selectedStoreId) return;
-        setLoading(true);
-        try {
-            const data = await fetchDashboardStats(selectedStoreId !== 'ALL' ? selectedStoreId : undefined);
-
-            setStats({
-                totalSales: data.totalSales || 0,
-                totalProfit: data.totalProfit || 0,
-                orders: data.orders || 0,
-                lowStock: data.lowStock || 0,
-                totalProducts: data.totalProducts || 0,
-                storeCount: data.storeCount || 0
-            });
-            setChartData(data.chartData || []);
-            setStorePerformanceData(data.storePerformance || []);
-            setTopProducts(data.topProducts || []);
-
-            setLoading(false);
-        } catch (error) {
-            console.error("Error fetching dashboard data", error);
-            setLoading(false);
-        }
+    const stats = {
+        totalSales: dashboardData?.totalSales || 0,
+        totalProfit: dashboardData?.totalProfit || 0,
+        orders: dashboardData?.orders || 0,
+        lowStock: dashboardData?.lowStock || 0,
+        totalProducts: dashboardData?.totalProducts || 0,
+        storeCount: dashboardData?.storeCount || 0
     };
+    const chartData = dashboardData?.chartData || [];
+    const storePerformanceData = dashboardData?.storePerformance || [];
+    const topProducts = dashboardData?.topProducts || [];
+
+    const loading = isLoading;
 
     if (loading && !stats.totalProducts) return <div style={{ padding: '2rem' }}>Loading Dashboard...</div>;
 
