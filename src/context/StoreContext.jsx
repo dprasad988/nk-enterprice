@@ -46,9 +46,18 @@ export const StoreProvider = ({ children }) => {
         loadStores();
     }, [role]);
 
+    const updateSelectedStoreId = (id) => {
+        setSelectedStoreId(id);
+        if (id) {
+            localStorage.setItem('selectedStoreId', id);
+        } else {
+            localStorage.removeItem('selectedStoreId');
+        }
+    };
+
     const value = {
         selectedStoreId,
-        setSelectedStoreId,
+        setSelectedStoreId: updateSelectedStoreId,
         stores,
         loading,
         role,

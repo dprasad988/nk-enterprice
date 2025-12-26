@@ -2,20 +2,22 @@ import api from './axiosInstance';
 import { useQuery } from '@tanstack/react-query';
 
 // Fetch Daily Sales Report
-export const fetchDailySalesReport = async ({ date, storeId }) => {
-    const params = { date };
+export const fetchDailySalesReport = async ({ date, storeId, page = 0, size = 5, search = '', status = 'ALL' }) => {
+    const params = { date, page, size, search, status };
     if (storeId) params.storeId = storeId;
     const response = await api.get('/reports/daily-sales', { params });
     return response.data;
 };
 
 // React Query Hook
-export const useDailySalesReport = (date, storeId) => {
+export const useDailySalesReport = (date, storeId, page, size, search, status) => {
     return useQuery({
-        queryKey: ['daily-sales-report', date, storeId],
-        queryFn: () => fetchDailySalesReport({ date, storeId }),
+        queryKey: ['daily-sales-report', date, storeId, page, size, search, status],
+        queryFn: () => fetchDailySalesReport({ date, storeId, page, size, search, status }),
         enabled: !!date, // Only run if date is selected
-        staleTime: 5 * 60 * 1000, // 5 minutes cache
+        staleTime: 0, // Always fetch fresh data
+        refetchInterval: 5000, // Auto-refresh every 5 seconds
+        keepPreviousData: true // Keep showing previous page data while loading new page
     });
 };
 

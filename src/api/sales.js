@@ -41,6 +41,11 @@ export const updateSale = async (id, saleData) => {
     return response.data;
 };
 
+export const fetchSaleVersions = async (id) => {
+    const response = await api.get(`/sales/${id}/versions`);
+    return response.data;
+};
+
 // Hooks
 export const useSales = (storeId) => {
     return useQuery({

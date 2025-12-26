@@ -42,10 +42,11 @@ const RetrieveBillModal = ({ isOpen, onClose, onRetrieve, showAlert }) => {
 
                 <input
                     type="text"
+                    autoFocus
                     placeholder="Bill Number... (e.g. 15)"
                     value={retrieveId}
                     onChange={(e) => setRetrieveId(e.target.value)}
-                    style={{ width: '100%', padding: '0.8rem', fontSize: '1.2rem', marginBottom: '1.5rem', border: '1px solid var(--border-color)', borderRadius: '0.5rem' }}
+                    style={{ width: '100%', padding: '0.8rem', fontSize: '1.2rem', marginBottom: '1.5rem', border: '1px solid var(--border-color)', borderRadius: '0.5rem', zIndex: 100, pointerEvents: 'auto', userSelect: 'text', backgroundColor: 'var(--bg-tertiary)', color: 'white' }}
                 />
                 <button className="btn btn-primary" onClick={handleRetrieve} style={{ width: '100%', padding: '1rem' }}>
                     Retrieve & Edit

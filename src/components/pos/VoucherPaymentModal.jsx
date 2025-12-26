@@ -6,12 +6,15 @@ const VoucherPaymentModal = ({
     isOpen,
     onClose,
     total,
-    onFullPayment, // (paymentMethodString) => void
-    onPartialPayment // (voucherCode, voucherAmount) => void
+    amountDue,
+    onApplyVoucher // (voucher) => void
 }) => {
     const [voucherCode, setVoucherCode] = useState('');
     const [verifiedVoucher, setVerifiedVoucher] = useState(null);
     const [error, setError] = useState(null);
+
+    // Use amountDue if provided, otherwise default to total
+    const effectiveTotal = amountDue !== undefined ? amountDue : total;
 
     useEffect(() => {
         if (isOpen) {
@@ -35,7 +38,12 @@ const VoucherPaymentModal = ({
         <Modal isOpen={isOpen} onClose={onClose} title="Pay with Voucher">
             <div style={{ padding: '1rem' }}>
                 <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
-                    <div>Total Due: Rs. {total.toFixed(2)}</div>
+                    <div>Total Due: Rs. {effectiveTotal.toFixed(2)}</div>
+                    {amountDue !== undefined && amountDue < total && (
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            (Cart Total: Rs. {total.toFixed(2)})
+                        </div>
+                    )}
                 </div>
 
                 {error && (
@@ -58,28 +66,20 @@ const VoucherPaymentModal = ({
                 ) : (
                     <div style={{ textAlign: 'center' }}>
                         <div style={{ color: 'var(--success)', fontWeight: 'bold', fontSize: '1.2rem' }}>Voucher Verified</div>
-                        <div style={{ margin: '1rem 0' }}>Balance: Rs. {verifiedVoucher.currentBalance.toFixed(2)}</div>
+                        <div style={{ margin: '1rem 0' }}>Available Balance: Rs. {verifiedVoucher.currentBalance.toFixed(2)}</div>
 
-                        {verifiedVoucher.currentBalance >= total ? (
-                            <button className="btn btn-primary" onClick={() => {
-                                onFullPayment('VOUCHER_CODE:' + verifiedVoucher.code);
-                                onClose();
-                            }} style={{ width: '100%', padding: '1rem' }}>
-                                PAY FULL AMOUNT (Rs. {total.toFixed(2)})
-                            </button>
-                        ) : (
-                            <div style={{ textAlign: 'center' }}>
-                                <div style={{ color: 'var(--warning-text)', marginBottom: '1rem' }}>
-                                    Insufficient Balance to cover full amount.
-                                </div>
-                                <button className="btn" onClick={() => {
-                                    onPartialPayment(verifiedVoucher.code, verifiedVoucher.currentBalance);
-                                    onClose();
-                                }} style={{ width: '100%', padding: '1rem', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--warning)' }}>
-                                    Use Rs. {verifiedVoucher.currentBalance.toFixed(2)} & Pay Balance
-                                </button>
+                        {verifiedVoucher.currentBalance < effectiveTotal && (
+                            <div style={{ color: 'var(--warning-text)', marginBottom: '1rem' }}>
+                                Insufficient Balance to cover full amount.
                             </div>
                         )}
+
+                        <button className="btn btn-primary" onClick={() => {
+                            onApplyVoucher(verifiedVoucher);
+                            onClose();
+                        }} style={{ width: '100%', padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold' }}>
+                            APPLY VOUCHER (Rs. {verifiedVoucher.currentBalance.toFixed(2)})
+                        </button>
                     </div>
                 )}
             </div>

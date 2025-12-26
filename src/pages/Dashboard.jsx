@@ -4,6 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { DollarSign, ShoppingCart, AlertTriangle, Package, TrendingUp } from 'lucide-react';
 import { useDashboardStats } from '../api/dashboard';
 import { useStore } from '../context/StoreContext';
+import { SkeletonStatCard, SkeletonQuickActionCard, SkeletonChartCard, SkeletonListCard } from '../components/SkeletonCard';
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -42,7 +43,38 @@ const Dashboard = () => {
 
     const loading = isLoading;
 
-    if (loading && !stats.totalProducts) return <div style={{ padding: '2rem' }}>Loading Dashboard...</div>;
+    if (loading && !stats.totalProducts) {
+        return (
+            <div className="fade-in">
+                {/* Stat Cards Skeleton */}
+                <div className="grid grid-cols-4" style={{ marginBottom: '2rem' }}>
+                    <SkeletonStatCard />
+                    <SkeletonStatCard />
+                    <SkeletonStatCard />
+                    <SkeletonStatCard />
+                </div>
+
+                {/* Quick Reports Skeleton (Conditional Logic Match) */}
+                {(!isOwner || selectedStoreId !== 'ALL') && (
+                    <>
+                        <div style={{ marginBottom: '1rem', height: '24px', width: '150px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px' }} />
+                        <div className="grid grid-cols-4" style={{ marginBottom: '2rem' }}>
+                            <SkeletonQuickActionCard />
+                            <SkeletonQuickActionCard />
+                            <SkeletonQuickActionCard />
+                            <SkeletonQuickActionCard />
+                        </div>
+                    </>
+                )}
+
+                {/* Charts & Lists Skeleton */}
+                <div className="grid" style={{ gridTemplateColumns: '2fr 1fr', gap: '1.5rem' }}>
+                    <SkeletonChartCard />
+                    <SkeletonListCard />
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="fade-in">

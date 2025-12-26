@@ -142,15 +142,20 @@ const Layout = () => {
 
 
 import { AlertProvider } from './context/AlertContext';
+import { LoadingProvider } from './context/LoadingContext';
+import LoadingOverlay from './components/LoadingOverlay';
 
 function App() {
     return (
         <StoreProvider>
-            <AlertProvider>
-                <Router>
-                    <Layout />
-                </Router>
-            </AlertProvider>
+            <LoadingProvider>
+                <AlertProvider>
+                    <LoadingOverlay />
+                    <Router>
+                        <Layout />
+                    </Router>
+                </AlertProvider>
+            </LoadingProvider>
         </StoreProvider>
     );
 }

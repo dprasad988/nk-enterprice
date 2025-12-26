@@ -371,7 +371,9 @@ const POS = () => {
 
         let finalPaymentMethod = method;
         if (partialVoucher && !method.startsWith('VOUCHER')) {
-            finalPaymentMethod = `VOUCHER_PARTIAL:${partialVoucher.code}:${partialVoucher.amount}|${method}`;
+            // Recalculate distinctively for the payload
+            const ded = calculateVoucherDeduction(partialVoucher.balance);
+            finalPaymentMethod = `VOUCHER_PARTIAL:${partialVoucher.code}:${ded}|${method}`;
         }
 
         const saleData = {
@@ -390,9 +392,11 @@ const POS = () => {
 
         try {
             let response;
+            // Recalculate dynamic values to ensure consistency
+            const currentVoucherDeduction = partialVoucher ? calculateVoucherDeduction(partialVoucher.balance) : 0;
             const amountToPay = editingSaleId
-                ? Math.max(0, total - (originalSaleTotal - returnDeduction) - (partialVoucher ? partialVoucher.amount : 0))
-                : Math.max(0, total - (partialVoucher ? partialVoucher.amount : 0));
+                ? Math.max(0, total - (originalSaleTotal - returnDeduction) - currentVoucherDeduction)
+                : Math.max(0, total - currentVoucherDeduction);
 
             if (editingSaleId) {
                 response = await updateSale(editingSaleId, saleData);
@@ -460,9 +464,21 @@ const POS = () => {
         setIsCashModalOpen(false);
     };
 
+    // Helper to calculate how much of the voucher determines
+    const calculateVoucherDeduction = (balance) => {
+        if (!balance) return 0;
+        // The amount needed to be paid by the user (before voucher)
+        const netPayable = editingSaleId
+            ? Math.max(0, total - (originalSaleTotal - returnDeduction))
+            : total;
+        return Math.min(balance, netPayable);
+    };
+
+    const appliedVoucherAmount = partialVoucher ? calculateVoucherDeduction(partialVoucher.balance) : 0;
+
     const amountToPay = editingSaleId
-        ? Math.max(0, total - (originalSaleTotal - returnDeduction) - (partialVoucher ? partialVoucher.amount : 0))
-        : Math.max(0, total - (partialVoucher ? partialVoucher.amount : 0));
+        ? Math.max(0, total - (originalSaleTotal - returnDeduction) - appliedVoucherAmount)
+        : Math.max(0, total - appliedVoucherAmount);
 
 
 
@@ -814,9 +830,16 @@ const POS = () => {
                     {partialVoucher && (
                         <div style={{ backgroundColor: 'rgba(234, 179, 8, 0.1)', padding: '0.5rem', borderRadius: '0.5rem', marginBottom: '1rem', border: '1px dashed var(--warning)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1rem', color: 'var(--warning-text)' }}>
-                                <span>Voucher Applied ({partialVoucher.code})</span>
+                                <div>
+                                    <span>Voucher Applied ({partialVoucher.code})</span>
+                                    {partialVoucher.balance !== undefined && (
+                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                            (Remaining Balance: Rs. {(partialVoucher.balance - appliedVoucherAmount).toFixed(2)})
+                                        </div>
+                                    )}
+                                </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <span>- Rs. {partialVoucher.amount.toFixed(2)}</span>
+                                    <span>- Rs. {appliedVoucherAmount.toFixed(2)}</span>
                                     <button onClick={() => setPartialVoucher(null)} className="btn" style={{ backgroundColor: 'var(--danger)', color: 'white', padding: '0.2rem 0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
                                         <XCircle size={14} /> Remove
                                     </button>
@@ -856,20 +879,21 @@ const POS = () => {
                                 </div>
 
                                 {/* Available Vouchers for Exchange */}
-                                {amountToPay > 0 && exchangeVouchers.length > 0 && !partialVoucher && (
+                                {exchangeVouchers.length > 0 && !partialVoucher && (
                                     <div style={{ marginBottom: '1rem' }}>
                                         {exchangeVouchers.map(v => (
                                             <button
                                                 key={v.code}
                                                 className="btn"
                                                 onClick={() => {
-                                                    setPartialVoucher({ code: v.code, amount: Math.min(v.currentBalance, amountToPay) });
+                                                    const deduction = Math.min(v.currentBalance, total); // Use total, as amountToPay might be skewed if we are just starting. Actually Math.min(balance, total) is the rule.
+                                                    setPartialVoucher({ code: v.code, amount: deduction, balance: v.currentBalance });
                                                     showAlert(`Voucher ${v.code} Applied`, "success");
                                                 }}
                                                 style={{ width: '100%', backgroundColor: 'var(--accent-color)', color: 'white', padding: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}
                                                 title={`Use Return Voucher: ${v.code}`}
                                             >
-                                                <Ticket size={18} /> Apply Voucher ({v.code})
+                                                <Ticket size={18} /> Apply Voucher ({v.code}) - Rs. {v.currentBalance.toFixed(2)}
                                             </button>
                                         ))}
                                     </div>
@@ -903,19 +927,47 @@ const POS = () => {
                                     <button
                                         className="btn btn-primary"
                                         onClick={() => handleCheckout('CASH', 0)}
-                                        disabled={amountToPay < 0}
+                                        disabled={total < (originalSaleTotal - returnDeduction) || (partialVoucher && partialVoucher.balance > appliedVoucherAmount) || (exchangeVouchers.length > 0 && !partialVoucher)}
                                         style={{
                                             width: '100%',
                                             display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem',
-                                            backgroundColor: total >= originalSaleTotal ? 'var(--warning)' : 'var(--bg-tertiary)',
-                                            color: total >= (originalSaleTotal - returnDeduction) ? 'black' : 'var(--text-secondary)',
-                                            cursor: (amountToPay >= 0) ? 'pointer' : 'not-allowed'
+                                            backgroundColor: (total >= (originalSaleTotal - returnDeduction) && !(partialVoucher && partialVoucher.balance > appliedVoucherAmount) && !(exchangeVouchers.length > 0 && !partialVoucher)) ? 'var(--warning)' : 'var(--danger)',
+                                            color: (total >= (originalSaleTotal - returnDeduction) && !(partialVoucher && partialVoucher.balance > appliedVoucherAmount) && !(exchangeVouchers.length > 0 && !partialVoucher)) ? 'black' : 'white',
+                                            cursor: (total >= (originalSaleTotal - returnDeduction) && !(partialVoucher && partialVoucher.balance > appliedVoucherAmount) && !(exchangeVouchers.length > 0 && !partialVoucher)) ? 'pointer' : 'not-allowed'
                                         }}
                                     >
-                                        <RotateCcw size={20} /> UPDATE BILL
+                                        {total >= (originalSaleTotal - returnDeduction) ? (
+                                            <>
+                                                {exchangeVouchers.length > 0 && !partialVoucher ? (
+                                                    <>
+                                                        <AlertTriangle size={20} /> Apply Return Voucher
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        {partialVoucher && partialVoucher.balance > appliedVoucherAmount ? (
+                                                            // Voucher has unused balance
+                                                            <>
+                                                                <AlertTriangle size={20} /> Add Items (Unused Voucher: Rs. {(partialVoucher.balance - appliedVoucherAmount).toFixed(2)})
+                                                            </>
+                                                        ) : (
+                                                            // All good to update
+                                                            <>
+                                                                <RotateCcw size={20} /> UPDATE BILL
+                                                            </>
+                                                        )}
+                                                    </>
+                                                )}
+                                            </>
+                                        ) : (
+                                            // Credit due
+                                            <>
+                                                <AlertTriangle size={20} /> Add Items (Credit: Rs. {Math.abs(total - (originalSaleTotal - returnDeduction)).toFixed(2)})
+                                            </>
+                                        )}
                                     </button>
                                 )}
                             </div>
+
                         ) : (
                             <>
                                 <button className="btn btn-primary" onClick={handleCashClick} style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem' }}>
@@ -1037,17 +1089,15 @@ const POS = () => {
                 isOpen={isVoucherModalOpen}
                 onClose={() => setIsVoucherModalOpen(false)}
                 total={total}
-                onFullPayment={(method) => {
-                    handleCheckout(method);
+                amountDue={amountToPay}
+                onApplyVoucher={(voucher) => {
+                    const deduction = Math.min(voucher.currentBalance, total);
+                    setPartialVoucher({ code: voucher.code, amount: deduction, balance: voucher.currentBalance });
                     setIsVoucherModalOpen(false);
-                }}
-                onPartialPayment={(code, amount) => {
-                    setPartialVoucher({ code, amount });
-                    setIsVoucherModalOpen(false);
-                    showAlert(`Voucher Applied. Balance Due: Rs. ${(total - amount).toFixed(2)}`);
+                    showAlert(`Voucher Applied. Balance Due: Rs. ${(Math.max(0, amountToPay - deduction)).toFixed(2)}`);
                 }}
             />
-        </div>
+        </div >
     );
 };
 

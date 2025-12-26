@@ -58,8 +58,11 @@ const Header = () => {
                 {isOwner && (
                     <div style={{ marginLeft: '1rem', position: 'relative', display: 'inline-block' }}>
                         <select
-                            value={selectedStoreId}
-                            onChange={(e) => setSelectedStoreId(Number(e.target.value))}
+                            value={selectedStoreId || ''}
+                            onChange={(e) => {
+                                const val = Number(e.target.value);
+                                if (!isNaN(val)) setSelectedStoreId(val);
+                            }}
                             style={{
                                 appearance: 'none',
                                 WebkitAppearance: 'none',
@@ -73,10 +76,10 @@ const Header = () => {
                                 fontSize: '1rem',
                                 cursor: 'pointer',
                                 paddingRight: '2.5rem',
-                                minWidth: '150px' // Ensure enough width for typical store names
+                                minWidth: '150px'
                             }}
                         >
-                            {stores.map(store => (
+                            {Array.isArray(stores) && stores.map(store => (
                                 <option key={store.id} value={store.id}>{store.name}</option>
                             ))}
                         </select>

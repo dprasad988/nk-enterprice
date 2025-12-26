@@ -89,12 +89,22 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId, onVouche
     };
 
     const processRequest = async () => {
-        const itemsToReturn = Object.entries(returnSelection).map(([pid, qty]) => ({
-            saleId: returnSaleData.id,
-            productId: pid,
-            quantity: qty,
-            reason: "Damaged"
-        }));
+        const itemsToReturn = Object.entries(returnSelection)
+            .map(([pid, qty]) => {
+                const quantity = parseInt(qty) || 0;
+                return {
+                    saleId: returnSaleData.id,
+                    productId: pid,
+                    quantity: quantity,
+                    reason: "Damaged"
+                };
+            })
+            .filter(item => item.quantity > 0);
+
+        if (itemsToReturn.length === 0) {
+            showAlert("Please select at least one item to return.", "warning");
+            return;
+        }
 
         try {
             await createReturnRequest(itemsToReturn);
@@ -163,6 +173,7 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId, onVouche
                                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                                     <input
                                         type="number"
+                                        autoFocus
                                         placeholder="Enter Bill ID..."
                                         value={returnBillId}
                                         onChange={(e) => setReturnBillId(e.target.value)}
@@ -252,9 +263,9 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId, onVouche
                                                         <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Max: {remainingQty}</span>
                                                         <input
                                                             type="checkbox"
-                                                            checked={!!returnSelection[item.productId]}
+                                                            checked={returnSelection[item.productId] !== undefined}
                                                             onChange={(e) => {
-                                                                if (e.target.checked) setReturnSelection(prev => ({ ...prev, [item.productId]: remainingQty }));
+                                                                if (e.target.checked) setReturnSelection(prev => ({ ...prev, [item.productId]: remainingQty > 0 ? 1 : 0 }));
                                                                 else {
                                                                     const newSel = { ...returnSelection };
                                                                     delete newSel[item.productId];
@@ -264,14 +275,24 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId, onVouche
                                                             style={{ cursor: 'pointer', width: '16px', height: '16px' }}
                                                         />
                                                     </div>
-                                                    {returnSelection[item.productId] && (
+                                                    {returnSelection[item.productId] !== undefined && (
                                                         <input
                                                             type="number"
                                                             min="1"
                                                             max={remainingQty}
                                                             value={returnSelection[item.productId]}
-                                                            onChange={(e) => setReturnSelection(prev => ({ ...prev, [item.productId]: Math.min(remainingQty, Math.max(1, parseInt(e.target.value) || 1)) }))}
-                                                            style={{ width: '60px', padding: '0.3rem', textAlign: 'center', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                                                            onChange={(e) => {
+                                                                const val = e.target.value;
+                                                                if (val === '') {
+                                                                    setReturnSelection(prev => ({ ...prev, [item.productId]: "" }));
+                                                                } else {
+                                                                    const parsed = parseInt(val);
+                                                                    if (!isNaN(parsed)) {
+                                                                        setReturnSelection(prev => ({ ...prev, [item.productId]: Math.min(remainingQty, parsed) }));
+                                                                    }
+                                                                }
+                                                            }}
+                                                            style={{ width: '60px', padding: '0.3rem', textAlign: 'center', borderRadius: '4px', border: '1px solid var(--border-color)', zIndex: 100, pointerEvents: 'auto', userSelect: 'text', opacity: 1, backgroundColor: 'var(--bg-tertiary)', color: 'white' }}
                                                         />
                                                     )}
                                                 </div>

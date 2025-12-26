@@ -35,14 +35,24 @@ body {
   color: var(--text-primary);
   height: 100vh;
   overflow: hidden;
-  /* Disable selection globally */
+  /* Removed global user-select: none to fix input focus issues on touch devices */
+}
+
+/* Apply user-select: none to structural/UI elements instead */
+.sidebar,
+.sticky-header,
+.btn,
+.card,
+.nav-item,
+th,
+.modal-header {
   user-select: none;
   -webkit-user-select: none;
   -moz-user-select: none;
   -ms-user-select: none;
 }
 
-/* Allow selection in inputs for typing */
+/* Ensure inputs allow selection */
 input,
 textarea {
   user-select: text !important;
@@ -134,19 +144,8 @@ textarea {
   /* This element scrolls */
 }
 
-.sticky-header {
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  background-color: var(--bg-primary);
-  border-bottom: 1px solid var(--border-color);
-  padding: 1rem 2rem;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  /* Align right */
-  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-}
+/* Duplicate sticky-header definition removed/merged */
+/* .sticky-header { ... } */
 
 .page-content {
   padding: 2rem;
