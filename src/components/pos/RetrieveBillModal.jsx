@@ -8,9 +8,12 @@ const RetrieveBillModal = ({ isOpen, onClose, onRetrieve, showAlert }) => {
 
     const handleRetrieve = async () => {
         if (!retrieveId) return;
+        const cleanId = retrieveId.trim();
+        if (!cleanId) return;
+
         setError(null);
         try {
-            const sale = await fetchExchangeableSaleById(retrieveId);
+            const sale = await fetchExchangeableSaleById(cleanId);
             if (!sale) {
                 const msg = "Bill not found.";
                 setError(msg);
@@ -32,7 +35,7 @@ const RetrieveBillModal = ({ isOpen, onClose, onRetrieve, showAlert }) => {
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Retrieve Bill">
             <div style={{ padding: '1rem' }}>
-                <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>Enter the Receipt Number (ID) to load items for exchange/correction.</p>
+                <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>Enter the Receipt Number (ID) to load items for <b>Exchange (Good Stock)</b>.</p>
 
                 {error && (
                     <div style={{ color: 'var(--danger)', marginBottom: '1rem', textAlign: 'center' }}>
@@ -47,8 +50,14 @@ const RetrieveBillModal = ({ isOpen, onClose, onRetrieve, showAlert }) => {
                     value={retrieveId}
                     onChange={(e) => setRetrieveId(e.target.value)}
                     style={{ width: '100%', padding: '0.8rem', fontSize: '1.2rem', marginBottom: '1.5rem', border: '1px solid var(--border-color)', borderRadius: '0.5rem', zIndex: 100, pointerEvents: 'auto', userSelect: 'text', backgroundColor: 'var(--bg-tertiary)', color: 'white' }}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleRetrieve();
+                        }
+                    }}
                 />
-                <button className="btn btn-primary" onClick={handleRetrieve} style={{ width: '100%', padding: '1rem' }}>
+                <button type="button" className="btn btn-primary" onClick={handleRetrieve} style={{ width: '100%', padding: '1rem' }}>
                     Retrieve & Edit
                 </button>
             </div>

@@ -13,7 +13,7 @@ const ProductQrModal = ({ isOpen, onClose, product }) => {
                 {product && (
                     <>
                         <div style={{ padding: '10px', background: 'white', border: '1px solid #ccc' }}>
-                            <QRCodeCanvas value={`Name: ${product.name} | Price: Rs. ${product.price?.toFixed(2)} | Code: ${product.barcode}` || ""} size={200} />
+                            <QRCodeCanvas value={product.barcode || ""} size={200} />
                         </div>
                         <div style={{ textAlign: 'center' }}>
                             <h3 style={{ margin: 0 }}>{product.name}</h3>

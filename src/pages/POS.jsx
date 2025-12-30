@@ -8,14 +8,18 @@ import { printReceipt } from '../templates/BillTemplate';
 import { fetchProductsPaged, useProductsPaged } from '../api/products';
 import { fetchSettingsMap, useSettingsMap } from '../api/settings';
 import { createSale, updateSale } from '../api/sales';
-import { fetchApprovedReturns, useApprovedReturns } from '../api/returns';
+import { fetchApprovedReturns, useApprovedReturns, rollbackExchange } from '../api/returns'; // Import rollbackExchange
 import ProductLogsModal from '../components/products/ProductLogsModal'; // Import ProductLogsModal
+
+// ... (other imports)
+
 import CashPaymentModal from '../components/pos/CashPaymentModal';
 import VoucherPaymentModal from '../components/pos/VoucherPaymentModal';
 import PaymentSuccessModal from '../components/pos/PaymentSuccessModal';
 import HeldSalesModal from '../components/pos/HeldSalesModal';
 import RetrieveBillModal from '../components/pos/RetrieveBillModal';
 import DamageReturnModal from '../components/pos/DamageReturnModal';
+import ExchangeReturnModal from '../components/pos/ExchangeReturnModal'; // New Import
 import ClearCartModal from '../components/pos/ClearCartModal';
 import { useStore } from '../context/StoreContext';
 import { useAlert } from '../context/AlertContext';
@@ -58,12 +62,10 @@ const POS = () => {
     const [isHoldModalOpen, setIsHoldModalOpen] = useState(false);
     const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
-    // Retrieve / Edit Bill State
+    // Retrieve / Exchange State
     const [isRetrieveModalOpen, setIsRetrieveModalOpen] = useState(false);
-    const [retrieveId, setRetrieveId] = useState('');
-    const [editingSaleId, setEditingSaleId] = useState(null);
-    const [exchangeVouchers, setExchangeVouchers] = useState([]); // Vouchers linked to edited bill
-    const [returnDeduction, setReturnDeduction] = useState(0);
+    const [isExchangeModalOpen, setIsExchangeModalOpen] = useState(false);
+    const [exchangeSaleData, setExchangeSaleData] = useState(null);
 
     const searchInputRef = useRef(null);
     const discountInputRef = useRef(null);
@@ -307,59 +309,32 @@ const POS = () => {
     };
 
     const removeFromCart = (id) => {
-        console.log("Removing Item ID:", id);
+
         setCart(prev => prev.filter(item => String(item.id) !== String(id)));
     };
 
 
-    // Retrieve Bill Logic
     const handleRetrieveClick = () => {
         setIsRetrieveModalOpen(true);
     };
 
-    const handleBillRetrieved = async (sale) => {
-        // Populate Cart
-        const remappedItems = sale.items.map(item => {
-            return {
-                id: item.productId,
-                name: item.productName || "Unknown Item",
-                price: item.price,
-                quantity: item.quantity,
-                stock: 9999, // Bypass stock check for retrieved items
-                discount: item.discount || 0
-            };
-        });
-
-        setCart(remappedItems);
-        setEditingSaleId(sale.id);
-        // Calculate effective total from remaining items/quantities to exclude refunded/damaged values
-        const effectiveTotal = remappedItems.reduce((sum, item) => {
-            const finalPrice = item.discount ? item.price * (1 - item.discount / 100) : item.price;
-            return sum + (finalPrice * item.quantity);
-        }, 0);
-        setOriginalSaleTotal(sale.totalAmount);
-        setReturnDeduction(sale.totalAmount - effectiveTotal);
-
-        // Fetch linked vouchers (if any, from previous returns)
-        try {
-            const vouchers = await fetchVouchersBySaleId(sale.id);
-            setExchangeVouchers(vouchers);
-        } catch (e) {
-            console.error("Error fetching vouchers for exchange:", e);
-        }
-
-        // Modal closed by component
-        showAlert(`Bill #${sale.id} Loaded for Editing.`, 'success');
+    const handleBillRetrieved = (sale) => {
+        // New Flow: Open Exchange Modal instead of populating cart
+        setExchangeSaleData(sale);
+        setIsExchangeModalOpen(true);
     };
 
-    const handleCancelEdit = () => {
-        setCart([]);
-        setEditingSaleId(null);
-        setOriginalSaleTotal(0);
-        setExchangeVouchers([]);
-        setPartialVoucher(null);
-        setReturnDeduction(0);
-        showAlert("Edit Cancelled. Cart Cleared.", 'success');
+    const handleExchangeVoucherIssued = (voucher) => {
+        // Auto-apply the issued voucher as a partial voucher / exchange credit
+        const deduction = Math.min(voucher.currentBalance, total);
+        setPartialVoucher({
+            code: voucher.code,
+            amount: deduction,
+            balance: voucher.currentBalance,
+            isExchange: true,
+            returnItems: voucher.returnItems // Persist items for checkout
+        });
+        showAlert(`Exchange Credit of Rs. ${voucher.amount.toFixed(2)} applied.`, "success");
     };
 
     const handlePrintReceipt = (serverSale) => {
@@ -373,7 +348,11 @@ const POS = () => {
         if (partialVoucher && !method.startsWith('VOUCHER')) {
             // Recalculate distinctively for the payload
             const ded = calculateVoucherDeduction(partialVoucher.balance);
-            finalPaymentMethod = `VOUCHER_PARTIAL:${partialVoucher.code}:${ded}|${method}`;
+            if (partialVoucher.code === 'EXCHANGE') {
+                finalPaymentMethod = `EXCHANGE:${ded}|${method}`;
+            } else {
+                finalPaymentMethod = `VOUCHER_PARTIAL:${partialVoucher.code}:${ded}|${method}`;
+            }
         }
 
         const saleData = {
@@ -390,54 +369,39 @@ const POS = () => {
             discount: discount
         };
 
-        try {
-            let response;
-            // Recalculate dynamic values to ensure consistency
-            const currentVoucherDeduction = partialVoucher ? calculateVoucherDeduction(partialVoucher.balance) : 0;
-            const amountToPay = editingSaleId
-                ? Math.max(0, total - (originalSaleTotal - returnDeduction) - currentVoucherDeduction)
-                : Math.max(0, total - currentVoucherDeduction);
+        // Inject Return Items for Atomic Processing
+        if (partialVoucher && partialVoucher.isExchange && partialVoucher.returnItems) {
+            saleData.returnItems = partialVoucher.returnItems;
+        }
 
-            if (editingSaleId) {
-                response = await updateSale(editingSaleId, saleData);
-                handlePrintReceipt({
-                    ...response,
-                    change: cashGiven - amountToPay,
-                    cashGiven: cashGiven,
-                    totalAmount: total,
-                    subtotal: subtotal,
-                    discountPercent: discount,
-                    items: saleData.items.map((it, idx) => ({ ...it, productName: cart[idx].name }))
-                });
-                setEditingSaleId(null);
-                setCart([]);
-                setDiscount(0);
-                setOriginalSaleTotal(0);
-                setReturnDeduction(0);
-                setExchangeVouchers([]);
-                setPartialVoucher(null);
-                showAlert("Bill Updated Successfully", "success");
-            } else {
-                response = await createSale(saleData);
-                const printItems = saleData.items.map((it, idx) => ({ ...it, productName: cart[idx].name }));
-                handlePrintReceipt({
-                    ...response,
-                    change: cashGiven - amountToPay,
-                    cashGiven: cashGiven,
-                    totalAmount: total,
-                    subtotal: subtotal,
-                    discountPercent: discount,
-                    items: printItems
-                });
-                setCart([]);
-                setDiscount(0);
-                setPartialVoucher(null); // Reset partial
-                showAlert("Sale Completed Successfully", "success");
-            }
-            await refetch();
+        try {
+            // Always create a new sale
+            const currentVoucherDeduction = partialVoucher ? calculateVoucherDeduction(partialVoucher.balance) : 0;
+            const amountToPay = Math.max(0, total - currentVoucherDeduction);
+
+            const response = await createSale(saleData);
+            const printItems = saleData.items.map((it, idx) => ({ ...it, productName: cart[idx].name }));
+
+            handlePrintReceipt({
+                ...response,
+                items: printItems,
+                cashGiven: cashGiven,
+                change: Math.max(0, cashGiven - amountToPay)
+            });
+
+            // Reset and Show Success
+            setLastSaleTotal(response.totalAmount);
+            setIsSuccessModalOpen(true);
+            setCart([]);
+            setDiscount(0);
+            setPartialVoucher(null); // Clear credit (it is now used/saved)
+            setPartialVoucher(null); // Clear credit (it is now used/saved)
+
         } catch (error) {
-            console.error("Sale Error:", error);
-            showAlert("Failed to process sale. Please try again.", "error");
+            console.error(error);
+            // Handle specific backend errors (like policy violation during checkout)
+            const msg = error.response?.data?.message || error.message || "Sale failed";
+            showAlert(msg, 'error');
         }
     };
 
@@ -467,18 +431,15 @@ const POS = () => {
     // Helper to calculate how much of the voucher determines
     const calculateVoucherDeduction = (balance) => {
         if (!balance) return 0;
-        // The amount needed to be paid by the user (before voucher)
-        const netPayable = editingSaleId
-            ? Math.max(0, total - (originalSaleTotal - returnDeduction))
-            : total;
-        return Math.min(balance, netPayable);
+        return Math.min(balance, total);
     };
 
     const appliedVoucherAmount = partialVoucher ? calculateVoucherDeduction(partialVoucher.balance) : 0;
 
-    const amountToPay = editingSaleId
-        ? Math.max(0, total - (originalSaleTotal - returnDeduction) - appliedVoucherAmount)
-        : Math.max(0, total - appliedVoucherAmount);
+    const amountToPay = Math.max(0, total - appliedVoucherAmount);
+
+    // Strict Rule: If Exchange Credit is applied, Total must be >= Credit Amount
+    const partiallyAppliedOrExchangeError = partialVoucher && partialVoucher.isExchange && total < partialVoucher.balance;
 
 
 
@@ -486,24 +447,55 @@ const POS = () => {
     const [isCartIconHovered, setIsCartIconHovered] = useState(false);
     const [isClearCartModalOpen, setIsClearCartModalOpen] = useState(false);
 
+    const removeVoucher = async () => {
+        if (partialVoucher && partialVoucher.isExchange) {
+            // User requested NO confirmation. Directly rollback.
+
+            // Perform Rollback if IDs are present
+            if (partialVoucher.returnIds && partialVoucher.returnIds.length > 0) {
+                try {
+                    await rollbackExchange(partialVoucher.returnIds);
+                    showAlert("Exchange Rolled Back. Inventory Reverted.", "info");
+                } catch (err) {
+                    console.error("Rollback failed", err);
+                    showAlert("Failed to rollback inventory. Contact Admin.", "error");
+                }
+            }
+        }
+        setPartialVoucher(null);
+    };
+
     const handleClearCart = () => {
-        if (cart.length === 0) return;
+        // If cart is empty and no voucher, do nothing.
+        if (cart.length === 0 && !partialVoucher) return;
+
+        // Unified Clear: If Exchange is active, Clear EVERYTHING (Items + Credit) in one go.
+        // This solves "click trash two times" issue.
+        if (partialVoucher && partialVoucher.isExchange) {
+            // If items exist, maybe ask confirmation? The user implies they want it gone.
+            // Given the feedback, let's make it instant or just one confirmation.
+            // Since getting to this state takes effort (Modal -> Process), maybe valid to clear all.
+            setCart([]);
+            removeVoucher();
+            return;
+        }
+
+        // If cart is empty but we have an Exchange Credit (already handled above now, but strictly safe)
+        if (cart.length === 0 && partialVoucher && partialVoucher.isExchange) {
+            removeVoucher();
+            return;
+        }
+
+        // Normal Clear Cart (Items only, retaining credit) - Standard Sales
         setIsClearCartModalOpen(true);
     };
 
     const confirmClearCart = () => {
         setCart([]);
         setDiscount(0);
-        setPartialVoucher(null);
-        // If editing, clear edit state too
-        if (editingSaleId) {
-            setEditingSaleId(null);
-            setOriginalSaleTotal(0);
-            setReturnDeduction(0);
-            setExchangeVouchers([]);
-        }
+        // Do NOT clear setPartialVoucher(null) here. Voucher/Credit persists until explicitly removed.
         setIsClearCartModalOpen(false);
-        showAlert("Cart Cleared", "success");
+        showAlert("Cart items cleared. Credit retained.", "success");
     };
 
     return (
@@ -596,9 +588,10 @@ const POS = () => {
             <div className="card" style={{ flex: 2, display: 'flex', flexDirection: 'column', padding: '0' }}>
                 <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+
                         <div
                             style={{
-                                cursor: cart.length > 0 ? 'pointer' : 'default',
+                                cursor: (cart.length > 0 || partialVoucher?.isExchange) ? 'pointer' : 'default',
                                 transition: 'transform 0.3s ease-in-out',
                                 transform: isCartIconHovered && cart.length > 0 ? 'rotateY(180deg)' : 'rotateY(0deg)',
                                 display: 'inline-block'
@@ -606,20 +599,15 @@ const POS = () => {
                             onMouseEnter={() => setIsCartIconHovered(true)}
                             onMouseLeave={() => setIsCartIconHovered(false)}
                             onClick={handleClearCart}
-                            title={cart.length > 0 ? "Clear Cart" : "Cart is Empty"}
+                            title={cart.length > 0 ? "Clear Cart" : (partialVoucher?.isExchange ? "Undo Exchange" : "Cart is Empty")}
                         >
-                            {isCartIconHovered && cart.length > 0 ? (
+                            {/* Show Trash text if HOVERED with items, OR ALWAYS if in Exchange Mode (to allow Undo) */}
+                            {(isCartIconHovered && cart.length > 0) || (partialVoucher && partialVoucher.isExchange) ? (
                                 <Trash2 size={36} color="var(--danger)" />
                             ) : (
                                 <ShoppingCart size={36} />
                             )}
                         </div>
-                        {editingSaleId && <h2 style={{ fontSize: '1.2rem', fontWeight: 'bold', margin: 0 }}>Editing #{editingSaleId}</h2>}
-                        {editingSaleId && (
-                            <button className="btn" onClick={handleCancelEdit} style={{ fontSize: '0.8rem', backgroundColor: 'var(--danger)', color: 'white', padding: '0.2rem 0.5rem' }}>
-                                Cancel
-                            </button>
-                        )}
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
 
@@ -770,7 +758,7 @@ const POS = () => {
                             <span>Total</span>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                                 <span>Rs. {total.toFixed(2)}</span>
-                                {subtotal >= (parseFloat(posSettings['discount_min_bill_amount']) || 10000) && !editingSaleId && (
+                                {subtotal >= (parseFloat(posSettings['discount_min_bill_amount']) || 10000) && (
                                     <button
                                         className="btn"
                                         onClick={() => {
@@ -797,7 +785,7 @@ const POS = () => {
                         </div>
 
                         {/* Discount Input (Toggled) */}
-                        {(showDiscountInput || discount > 0) && subtotal >= (parseFloat(posSettings['discount_min_bill_amount']) || 10000) && !editingSaleId && (
+                        {(showDiscountInput || discount > 0) && subtotal >= (parseFloat(posSettings['discount_min_bill_amount']) || 10000) && (
                             <div style={{ marginTop: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-secondary)', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem' }}>
                                 <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                                     Discount (Max {parseFloat(posSettings['discount_max_percent']) || 0}%):
@@ -816,7 +804,18 @@ const POS = () => {
                                         setDiscount(val);
                                     }}
                                     placeholder="0%"
-                                    style={{ width: '70px', padding: '0.3rem', textAlign: 'right', border: '1px solid var(--border-color)', borderRadius: '0.25rem' }}
+                                    style={{
+                                        width: '100px',
+                                        padding: '0.25rem',
+                                        textAlign: 'center',
+                                        fontSize: '1.1rem',
+                                        fontWeight: 'bold',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: '0.25rem',
+                                        backgroundColor: 'var(--bg-tertiary)',
+                                        color: 'white',
+                                        height: '36px'
+                                    }}
                                 />
                                 {discount > 0 && (
                                     <span style={{ fontSize: '0.9rem', color: 'var(--success)', minWidth: '80px', textAlign: 'right' }}>
@@ -828,173 +827,105 @@ const POS = () => {
                     </div>
 
                     {partialVoucher && (
-                        <div style={{ backgroundColor: 'rgba(234, 179, 8, 0.1)', padding: '0.5rem', borderRadius: '0.5rem', marginBottom: '1rem', border: '1px dashed var(--warning)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1rem', color: 'var(--warning-text)' }}>
+                        <div style={{
+                            backgroundColor: partialVoucher.isExchange ? 'rgba(59, 130, 246, 0.1)' : 'rgba(234, 179, 8, 0.1)',
+                            padding: '0.5rem',
+                            borderRadius: '0.5rem',
+                            marginBottom: '1rem',
+                            border: partialVoucher.isExchange ? '1px dashed var(--accent-color)' : '1px dashed var(--warning)'
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1rem', color: partialVoucher.isExchange ? 'var(--accent-color)' : 'var(--warning-text)' }}>
                                 <div>
-                                    <span>Voucher Applied ({partialVoucher.code})</span>
-                                    {partialVoucher.balance !== undefined && (
+                                    <span style={{ fontWeight: 'bold' }}>
+                                        {partialVoucher.isExchange ? 'Exchange Credit Applied' : `Voucher Applied (${partialVoucher.code})`}
+                                    </span>
+                                    {partialVoucher.balance !== undefined && partialVoucher.balance > appliedVoucherAmount && (
                                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                                             (Remaining Balance: Rs. {(partialVoucher.balance - appliedVoucherAmount).toFixed(2)})
                                         </div>
                                     )}
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <span>- Rs. {appliedVoucherAmount.toFixed(2)}</span>
-                                    <button onClick={() => setPartialVoucher(null)} className="btn" style={{ backgroundColor: 'var(--danger)', color: 'white', padding: '0.2rem 0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                                        <XCircle size={14} /> Remove
-                                    </button>
+                                    {appliedVoucherAmount > 0 ? (
+                                        <span style={{ fontWeight: 'bold' }}>- Rs. {appliedVoucherAmount.toFixed(2)}</span>
+                                    ) : (
+                                        <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Credit: Rs. {partialVoucher.balance.toFixed(2)}</span>
+                                    )}
+                                    {/* Hide Remove button for Exchange (User preference: use Delete/Clear Cart to undo). Show for normal vouchers. */}
+                                    {!partialVoucher.isExchange && (
+                                        <button onClick={removeVoucher} className="btn" style={{ backgroundColor: 'var(--danger)', color: 'white', padding: '0.2rem 0.5rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                            <XCircle size={14} /> Remove
+                                        </button>
+                                    )}
                                 </div>
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem', fontWeight: 'bold', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px dashed var(--border-color)' }}>
-                                <span>Balance Due</span>
-                                <span>Rs. {amountToPay.toFixed(2)}</span>
-                            </div>
+                            {/* Balance Due Line moved out or kept here if needed, but styling seems self-contained now. */}
+                        </div>
+                    )}
+                    {amountToPay > 0 && amountToPay < total && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '1.8rem', fontWeight: 'bold', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px dashed var(--border-color)', color: 'var(--text-primary)' }}>
+                            <span>Balance Due</span>
+                            <span>Rs. {amountToPay.toFixed(2)}</span>
+                        </div>
+                    )}
+
+                    {/* Payment Options */}
+                    {partiallyAppliedOrExchangeError && partialVoucher && (
+                        <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: '0.5rem', borderRadius: '0.5rem', marginBottom: '1rem', border: '1px solid var(--danger)', color: 'var(--danger)', fontSize: '0.9rem', fontWeight: 'bold' }}>
+                            Exchange Rule: New Bill Total must be equal or greater than Exchange Credit (Rs. {partialVoucher.balance.toFixed(2)}).
                         </div>
                     )}
 
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        {editingSaleId || partialVoucher ? (
-                            <div style={{ width: '100%' }}>
-                                {/* Exchange Info */}
-                                <div style={{ marginBottom: '1rem', padding: '0.5rem', backgroundColor: 'var(--bg-secondary)', borderRadius: '0.5rem', fontSize: '0.9rem' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                        <span>Original Bill:</span>
-                                        <span>Rs. {originalSaleTotal.toFixed(2)}</span>
-                                    </div>
-                                    {returnDeduction > 0 && !partialVoucher && (
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--danger)', fontSize: '0.85rem' }}>
-                                            <span>Less Returns:</span>
-                                            <span>- Rs. {returnDeduction.toFixed(2)}</span>
-                                        </div>
-                                    )}
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', marginTop: '0.5rem', color: total >= (originalSaleTotal - returnDeduction) ? 'var(--text-primary)' : 'var(--danger)' }}>
-                                        <span>{total >= (originalSaleTotal - returnDeduction) ? 'Balance to Pay:' : 'Credit Remaining:'}</span>
-                                        <span>Rs. {total >= (originalSaleTotal - returnDeduction) ? amountToPay.toFixed(2) : Math.abs(total - (originalSaleTotal - returnDeduction)).toFixed(2)}</span>
-                                    </div>
-                                    {total < (originalSaleTotal - returnDeduction) && (
-                                        <div style={{ color: 'var(--danger)', marginTop: '0.5rem', fontWeight: 'bold' }}>
-                                            * Add more items to utilize credit. No cash refunds.
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Available Vouchers for Exchange */}
-                                {exchangeVouchers.length > 0 && !partialVoucher && (
-                                    <div style={{ marginBottom: '1rem' }}>
-                                        {exchangeVouchers.map(v => (
-                                            <button
-                                                key={v.code}
-                                                className="btn"
-                                                onClick={() => {
-                                                    const deduction = Math.min(v.currentBalance, total); // Use total, as amountToPay might be skewed if we are just starting. Actually Math.min(balance, total) is the rule.
-                                                    setPartialVoucher({ code: v.code, amount: deduction, balance: v.currentBalance });
-                                                    showAlert(`Voucher ${v.code} Applied`, "success");
-                                                }}
-                                                style={{ width: '100%', backgroundColor: 'var(--accent-color)', color: 'white', padding: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}
-                                                title={`Use Return Voucher: ${v.code}`}
-                                            >
-                                                <Ticket size={18} /> Apply Voucher ({v.code}) - Rs. {v.currentBalance.toFixed(2)}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-
-                                {amountToPay > 0 ? (
-                                    <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
-                                        <button
-                                            className="btn btn-primary"
-                                            onClick={handleCashClick}
-                                            style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem' }}
-                                        >
-                                            <Banknote size={18} /> CASH
-                                        </button>
-                                        <button
-                                            className="btn"
-                                            onClick={() => handleCheckout('CARD')}
-                                            style={{ flex: 1, backgroundColor: '#8b5cf6', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem' }}
-                                        >
-                                            <CreditCard size={18} /> CARD
-                                        </button>
-                                        <button
-                                            className="btn"
-                                            onClick={() => setIsVoucherModalOpen(true)}
-                                            style={{ flex: 1, backgroundColor: 'var(--accent-color)', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem' }}
-                                        >
-                                            <Ticket size={18} /> VOUCHER
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <button
-                                        className="btn btn-primary"
-                                        onClick={() => handleCheckout('CASH', 0)}
-                                        disabled={total < (originalSaleTotal - returnDeduction) || (partialVoucher && partialVoucher.balance > appliedVoucherAmount) || (exchangeVouchers.length > 0 && !partialVoucher)}
-                                        style={{
-                                            width: '100%',
-                                            display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem',
-                                            backgroundColor: (total >= (originalSaleTotal - returnDeduction) && !(partialVoucher && partialVoucher.balance > appliedVoucherAmount) && !(exchangeVouchers.length > 0 && !partialVoucher)) ? 'var(--warning)' : 'var(--danger)',
-                                            color: (total >= (originalSaleTotal - returnDeduction) && !(partialVoucher && partialVoucher.balance > appliedVoucherAmount) && !(exchangeVouchers.length > 0 && !partialVoucher)) ? 'black' : 'white',
-                                            cursor: (total >= (originalSaleTotal - returnDeduction) && !(partialVoucher && partialVoucher.balance > appliedVoucherAmount) && !(exchangeVouchers.length > 0 && !partialVoucher)) ? 'pointer' : 'not-allowed'
-                                        }}
-                                    >
-                                        {total >= (originalSaleTotal - returnDeduction) ? (
-                                            <>
-                                                {exchangeVouchers.length > 0 && !partialVoucher ? (
-                                                    <>
-                                                        <AlertTriangle size={20} /> Apply Return Voucher
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        {partialVoucher && partialVoucher.balance > appliedVoucherAmount ? (
-                                                            // Voucher has unused balance
-                                                            <>
-                                                                <AlertTriangle size={20} /> Add Items (Unused Voucher: Rs. {(partialVoucher.balance - appliedVoucherAmount).toFixed(2)})
-                                                            </>
-                                                        ) : (
-                                                            // All good to update
-                                                            <>
-                                                                <RotateCcw size={20} /> UPDATE BILL
-                                                            </>
-                                                        )}
-                                                    </>
-                                                )}
-                                            </>
-                                        ) : (
-                                            // Credit due
-                                            <>
-                                                <AlertTriangle size={20} /> Add Items (Credit: Rs. {Math.abs(total - (originalSaleTotal - returnDeduction)).toFixed(2)})
-                                            </>
-                                        )}
-                                    </button>
-                                )}
-                            </div>
-
+                        {amountToPay <= 0 && cart.length > 0 ? (
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => handleCheckout('EXCHANGE')}
+                                style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '1.2rem', fontWeight: 'bold' }}
+                            >
+                                <CheckCircle size={24} /> COMPLETE EXCHANGE
+                            </button>
                         ) : (
                             <>
-                                <button className="btn btn-primary" onClick={handleCashClick} style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem' }}>
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={handleCashClick}
+                                    disabled={partiallyAppliedOrExchangeError}
+                                    style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem', opacity: partiallyAppliedOrExchangeError ? 0.5 : 1 }}
+                                >
                                     <Banknote size={18} /> CASH
                                 </button>
-                                <button className="btn" onClick={() => handleCheckout('CARD')} style={{ flex: 1, backgroundColor: '#8b5cf6', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem' }}>
+                                <button
+                                    className="btn"
+                                    onClick={() => handleCheckout('CARD')}
+                                    disabled={partiallyAppliedOrExchangeError}
+                                    style={{ flex: 1, backgroundColor: '#8b5cf6', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem', opacity: partiallyAppliedOrExchangeError ? 0.5 : 1 }}
+                                >
                                     <CreditCard size={18} /> CARD
                                 </button>
-                                <button className="btn" onClick={() => setIsVoucherModalOpen(true)} style={{ flex: 1, backgroundColor: 'var(--accent-color)', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem' }}>
+                                <button
+                                    className="btn"
+                                    onClick={() => setIsVoucherModalOpen(true)}
+                                    disabled={partiallyAppliedOrExchangeError}
+                                    style={{ flex: 1, backgroundColor: 'var(--accent-color)', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '1rem', fontSize: '0.9rem', opacity: partiallyAppliedOrExchangeError ? 0.5 : 1 }}
+                                >
                                     <Ticket size={18} /> VOUCHER
-                                </button>
-                                <button className="btn" onClick={handleHoldSale} title="Hold / Park Sale" style={{ width: '3.5rem', flex: '0 0 auto', backgroundColor: 'var(--warning)', color: 'black', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '0', fontSize: '0.9rem' }}>
-                                    <PauseCircle size={18} />
                                 </button>
                             </>
                         )}
+                        <button className="btn" onClick={handleHoldSale} title="Hold / Park Sale" style={{ width: '3.5rem', flex: '0 0 auto', backgroundColor: 'var(--warning)', color: 'black', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '0', fontSize: '0.9rem' }}>
+                            <PauseCircle size={18} />
+                        </button>
                     </div>
                 </div>
-            </div >
+            </div>
+
 
             {/* Cash Payment Modal */}
             <CashPaymentModal
                 isOpen={isCashModalOpen}
                 onClose={() => setIsCashModalOpen(false)}
                 total={total}
-                originalSaleTotal={originalSaleTotal}
-                editingSaleId={editingSaleId}
                 amountToPay={amountToPay}
                 onPaymentComplete={handleCashPaymentComplete}
             />
@@ -1071,6 +1002,15 @@ const POS = () => {
                 showAlert={showAlert}
             />
 
+            {/* Exchange / Return Selection Modal */}
+            <ExchangeReturnModal
+                isOpen={isExchangeModalOpen}
+                onClose={() => setIsExchangeModalOpen(false)}
+                saleData={exchangeSaleData}
+                onVoucherIssued={handleExchangeVoucherIssued}
+                showAlert={showAlert}
+            />
+
             {/* Return Processing Modal */}
             <DamageReturnModal
                 isOpen={isReturnModalOpen}
@@ -1078,8 +1018,6 @@ const POS = () => {
                 showAlert={showAlert}
                 initialBillId={returnBillId}
                 onVoucherIssued={(voucher) => {
-                    // Manual Apply: Add to available exchange vouchers list
-                    setExchangeVouchers(prev => [...prev, { ...voucher, currentBalance: voucher.amount }]);
                     showAlert("Voucher Issued! You can now apply it to this bill.", "success");
                 }}
             />

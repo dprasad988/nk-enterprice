@@ -111,19 +111,19 @@ export const printReceipt = (serverSale) => {
                 </table>
                 
                 <div class="total-section">
-                    ${serverSale.discountPercent > 0 ? `
+                    ${(serverSale.discountPercent || serverSale.discount) > 0 ? `
                     <div class="row">
                         <div>Subtotal</div>
-                        <div>${(serverSale.subtotal || 0).toFixed(2)}</div>
+                        <div>${(serverSale.subtotal || (serverSale.totalAmount / (1 - (serverSale.discountPercent || serverSale.discount) / 100))).toFixed(2)}</div>
                     </div>
                     <div class="row" style="color: #444; font-style: italic;">
-                        <div>Discount (${serverSale.discountPercent}%)</div>
-                        <div>-${(serverSale.subtotal * serverSale.discountPercent / 100).toFixed(2)}</div>
+                        <div>Discount (${serverSale.discountPercent || serverSale.discount}%)</div>
+                        <div>-${((serverSale.subtotal || (serverSale.totalAmount / (1 - (serverSale.discountPercent || serverSale.discount) / 100))) * (serverSale.discountPercent || serverSale.discount) / 100).toFixed(2)}</div>
                     </div>
                     ` : ''}
                     <div class="row grand-total">
                         <div>TOTAL</div>
-                        <div>${(serverSale.totalAmount || 0).toFixed(2)}</div>
+                        <div>Rs. ${(serverSale.totalAmount || 0).toFixed(2)}</div>
                     </div>
                     <div class="row" style="margin-top: 5px;">
                         <div>Payment Method</div>
@@ -132,20 +132,21 @@ export const printReceipt = (serverSale) => {
                     ${(serverSale.cashGiven && serverSale.cashGiven > 0) ? `
                     <div class="row">
                         <div>Cash Given</div>
-                        <div>${Number(serverSale.cashGiven).toFixed(2)}</div>
+                        <div>Rs. ${Number(serverSale.cashGiven).toFixed(2)}</div>
                     </div>` : ''}
                     ${serverSale.change > 0 ? `
                     <div class="row">
                         <div>Change</div>
-                        <div>${serverSale.change.toFixed(2)}</div>
+                        <div>Rs. ${serverSale.change.toFixed(2)}</div>
                     </div>` : ''}
                 </div>
 
                 <div class="footer">
                     Thank you!<br>
                     Please Come Again<br>
-                    <div style="margin-top: 5px; font-weight: bold; border-top: 1px dotted #ccc; padding-top:2px;">
-                        * Items exchangeable within 3 days *
+                    <div style="margin-top: 10px; border-top: 1px dashed #000; padding-top: 5px;">
+                        <div style="font-weight: bold; margin-bottom: 2px;">*** IMPORTANT NOTICE ***</div>
+                        <div style="font-size: 11px;">Items can be exchanged within 3 days with original receipt</div>
                     </div>
                 </div>
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Modal from '../Modal';
 import ConfirmModal from '../ConfirmModal';
-import { CheckCircle, Printer, RefreshCw, AlertCircle, Clock } from 'lucide-react';
+import { CheckCircle, Printer, RefreshCw, AlertCircle, Clock, Copy } from 'lucide-react';
 import { fetchSaleById } from '../../api/sales';
 import { createReturnRequest, fetchReturnsBySale, issueReturnVoucher } from '../../api/returns';
 import { printVoucher } from '../../templates/VoucherTemplate';
@@ -143,6 +143,9 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId, onVouche
         }
     };
 
+    const [hasCopiedOrPrinted, setHasCopiedOrPrinted] = useState(false);
+
+    // Reset state helper
     const resetState = () => {
         setReturnSaleData(null);
         setCreatedVoucher(null);
@@ -150,11 +153,40 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId, onVouche
         setReturnSelection({});
         setExistingRequests([]);
         setIssueSelection({});
+        setHasCopiedOrPrinted(false);
     };
 
     const handleClose = () => {
+        // Safe Close Check
+        if (createdVoucher && !hasCopiedOrPrinted) {
+            showAlert("Please Copy or Print the voucher before closing!", "warning");
+            return;
+        }
         resetState();
         onClose();
+    };
+
+    const handleCopy = () => {
+        if (createdVoucher) {
+            navigator.clipboard.writeText(createdVoucher.code);
+            showAlert("Voucher Code Copied!", "success");
+            setHasCopiedOrPrinted(true);
+        }
+    };
+
+    const handlePrint = () => {
+        if (createdVoucher) {
+            printVoucher(createdVoucher);
+            setHasCopiedOrPrinted(true);
+            // We can now safely close, optionally wait a moment or let user close
+            // User requested: "make sure rescrict close... before copy... or print".
+            // If printed, it's safe. We can auto-close if desired, or let them close.
+            // Previous logic was auto-close. I'll invoke handleClose() which now passes because state is true.
+            setTimeout(() => {
+                resetState();
+                onClose();
+            }, 500);
+        }
     };
 
     return (
@@ -186,19 +218,34 @@ const DamageReturnModal = ({ isOpen, onClose, showAlert, initialBillId, onVouche
                         </>
                     ) : createdVoucher ? (
                         <div style={{ textAlign: 'center' }}>
-                            <div style={{ color: 'var(--success)', marginBottom: '1rem' }}><CheckCircle size={48} style={{ margin: '0 auto' }} /></div>
-                            <h3>Voucher Issued!</h3>
-                            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', padding: '1rem', border: '2px dashed var(--accent-color)', margin: '1rem 0', cursor: 'pointer' }}
-                                onClick={() => { navigator.clipboard.writeText(createdVoucher.code); showAlert("Code Copied!"); }}
-                            >
-                                {createdVoucher.code}
+                            {/* Icon Removed as per request */}
+                            <h3 style={{ marginTop: '1rem' }}>Voucher Issued!</h3>
+
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', margin: '1rem 0' }}>
+                                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', padding: '1rem', border: '2px dashed var(--accent-color)', cursor: 'default', flex: 1, textAlign: 'center' }}>
+                                    {createdVoucher.code}
+                                </div>
+                                <button
+                                    className="btn"
+                                    onClick={handleCopy}
+                                    title="Copy Code"
+                                    style={{ padding: '1rem', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}
+                                >
+                                    <CheckCircle size={20} style={{ display: hasCopiedOrPrinted ? 'block' : 'none', color: 'var(--success)' }} />
+                                    {!hasCopiedOrPrinted && <Printer size={0} style={{ display: 'none' }} /> /* Hack to import something if needed, but using Copy icon would be better if imported. Use text if no icon available. */}
+                                    <span style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>COPY</span>
+                                </button>
                             </div>
+
                             <p>Amount: Rs. {createdVoucher.amount}</p>
-                            <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                                <button className="btn" onClick={() => printVoucher(createdVoucher)} style={{ flex: 1, backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                            <div style={{ marginTop: '1.5rem' }}>
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={handlePrint}
+                                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', padding: '0.8rem' }}
+                                >
                                     <Printer size={18} /> Print Slip
                                 </button>
-                                <button className="btn btn-primary" onClick={handleClose} style={{ flex: 1 }}>Close</button>
                             </div>
                         </div>
                     ) : (

@@ -19,7 +19,7 @@ export const StoreProvider = ({ children }) => {
             if (role === 'OWNER' && localStorage.getItem('token')) {
                 try {
                     const data = await fetchStores();
-                    console.log("[StoreContext] Loaded Stores:", data);
+
                     setStores(data);
                     // Only auto-select if not already set (or valid)
                     if (data.length > 0) {

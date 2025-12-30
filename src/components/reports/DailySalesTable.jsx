@@ -37,7 +37,6 @@ const DailySalesTable = () => {
         }));
     };
 
-    if (isLoading && !report) return <div className="p-4 text-center">Loading Daily Report...</div>;
     if (error) return <div className="p-4 text-center text-red-500">Error loading report</div>;
 
     const bills = report?.bills || [];
@@ -128,7 +127,16 @@ const DailySalesTable = () => {
             )}
 
             {/* Detailed Table */}
-            <div className="card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div className="card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: '300px', position: 'relative' }}>
+                {isLoading && (
+                    <div style={{
+                        position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10
+                    }}>
+                        <div className="spinner"></div> {/* Assuming spinner class exists or just text */}
+                        <span style={{ marginLeft: '10px' }}>Loading...</span>
+                    </div>
+                )}
                 <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <h3 style={{ margin: 0, color: 'var(--text-primary)' }}>Transaction Details</h3>
@@ -287,6 +295,39 @@ const DailySalesTable = () => {
                                                         </tbody>
                                                     </table>
 
+                                                    {/* Discount Summary Section */}
+                                                    {bill.discount && bill.discount > 0 ? (
+                                                        <div style={{
+                                                            marginTop: '1rem',
+                                                            background: 'var(--bg-secondary)',
+                                                            padding: '0.75rem 1.5rem',
+                                                            borderRadius: '0.5rem',
+                                                            display: 'flex',
+                                                            justifyContent: 'flex-end',
+                                                            alignItems: 'center',
+                                                            gap: '2rem'
+                                                        }}>
+                                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                                                                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Subtotal</span>
+                                                                <span style={{ fontWeight: '500' }}>Rs. {(bill.totalAmount / (1 - bill.discount / 100.0)).toFixed(2)}</span>
+                                                            </div>
+
+                                                            <div style={{ height: '2rem', width: '1px', background: 'var(--border-color)' }}></div>
+
+                                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                                                                <span style={{ fontSize: '0.85rem', color: 'var(--accent-color)' }}>Discount ({bill.discount}%)</span>
+                                                                <span style={{ fontWeight: 'bold', color: 'var(--accent-color)' }}>- Rs. {((bill.totalAmount / (1 - bill.discount / 100.0)) - bill.totalAmount).toFixed(2)}</span>
+                                                            </div>
+
+                                                            <div style={{ height: '2rem', width: '1px', background: 'var(--border-color)' }}></div>
+
+                                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                                                                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Total</span>
+                                                                <span style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>Rs. {bill.totalAmount.toFixed(2)}</span>
+                                                            </div>
+                                                        </div>
+                                                    ) : null}
+
                                                     {(bill.voucherCode || bill.hasReturns) && (
                                                         <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
                                                             <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>RETURN & VOUCHER DETAILS</div>
@@ -311,7 +352,7 @@ const DailySalesTable = () => {
                                                     )}
 
 
-                                                    <SaleVersionsDisplay saleId={bill.saleId} />
+
 
                                                 </div>
                                             </td>
@@ -331,118 +372,47 @@ const DailySalesTable = () => {
             </div>
 
             {/* Pagination Controls */}
-            {totalPages > 1 && (
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem' }}>
-                    <button
-                        onClick={() => handlePageChange(currentPage - 1)}
-                        disabled={currentPage === 0}
-                        className="btn"
-                        style={{
-                            padding: '0.5rem 1rem',
-                            opacity: currentPage === 0 ? 0.5 : 1,
-                            cursor: currentPage === 0 ? 'not-allowed' : 'pointer',
-                            background: 'var(--bg-secondary)',
-                            color: 'var(--text-primary)'
-                        }}
-                    >
-                        Previous
-                    </button>
-                    <span style={{ color: 'var(--text-secondary)' }}>
-                        Page {currentPage + 1} of {totalPages}
-                    </span>
-                    <button
-                        onClick={() => handlePageChange(currentPage + 1)}
-                        disabled={currentPage === totalPages - 1} // 0-indexed: max index is totalPages - 1
-                        className="btn"
-                        style={{
-                            padding: '0.5rem 1rem',
-                            opacity: currentPage === totalPages - 1 ? 0.5 : 1,
-                            cursor: currentPage === totalPages - 1 ? 'not-allowed' : 'pointer',
-                            background: 'var(--bg-secondary)',
-                            color: 'var(--text-primary)'
-                        }}
-                    >
-                        Next
-                    </button>
-                </div>
-            )}
-        </div>
-    );
-};
-
-const SaleVersionsDisplay = ({ saleId }) => {
-    const [versions, setVersions] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    React.useEffect(() => {
-        const load = async () => {
-            try {
-                const { fetchSaleVersions } = await import('../../api/sales');
-                const data = await fetchSaleVersions(saleId);
-                setVersions(data);
-            } catch (e) {
-                console.error(e);
-            } finally {
-                setLoading(false);
-            }
-        };
-        load();
-    }, [saleId]);
-
-    if (loading) return <div style={{ padding: '1rem', color: 'var(--text-secondary)' }}>Loading history...</div>;
-    if (!versions || !Array.isArray(versions) || versions.length === 0) return null;
-
-    // Filter: Oldest version is usually the "Original Bill" if we saved it as PRE-UPDATE.
-    // Actually, backend logic: We save "PRE-UPDATE" version before update.
-    // So the versions list contains [Version 2 (if 2 updates), Version 1 (Original)].
-    // The versions search returns Descending order (Latest first).
-    // So versions[0] is most recent history (the state BEFORE the last edit).
-    // versions[last] is the Original state.
-
-    return (
-        <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-            <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>HISTORY & MODIFICATIONS</div>
-            {versions.map((ver, idx) => (
-                <div key={ver.id} style={{ marginBottom: '1rem', padding: '1rem', background: 'var(--bg-tertiary)', borderRadius: '0.5rem', border: '1px dashed var(--border-color)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem' }}>
-                        <div>
-                            <span style={{ color: 'var(--accent-color)', fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.8rem' }}>
-                                {ver.versionReason || "Original Bill"}
-                            </span>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                {new Date(ver.versionAt).toLocaleString()}
-                            </div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>Total: Rs. {ver.totalAmount?.toFixed(2)}</div>
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Cashier: {ver.cashierName}</div>
-                        </div>
+            {
+                totalPages > 1 && (
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem' }}>
+                        <button
+                            onClick={() => handlePageChange(currentPage - 1)}
+                            disabled={currentPage === 0}
+                            className="btn"
+                            style={{
+                                padding: '0.5rem 1rem',
+                                opacity: currentPage === 0 ? 0.5 : 1,
+                                cursor: currentPage === 0 ? 'not-allowed' : 'pointer',
+                                background: 'var(--bg-secondary)',
+                                color: 'var(--text-primary)'
+                            }}
+                        >
+                            Previous
+                        </button>
+                        <span style={{ color: 'var(--text-secondary)' }}>
+                            Page {currentPage + 1} of {totalPages}
+                        </span>
+                        <button
+                            onClick={() => handlePageChange(currentPage + 1)}
+                            disabled={currentPage === totalPages - 1} // 0-indexed: max index is totalPages - 1
+                            className="btn"
+                            style={{
+                                padding: '0.5rem 1rem',
+                                opacity: currentPage === totalPages - 1 ? 0.5 : 1,
+                                cursor: currentPage === totalPages - 1 ? 'not-allowed' : 'pointer',
+                                background: 'var(--bg-secondary)',
+                                color: 'var(--text-primary)'
+                            }}
+                        >
+                            Next
+                        </button>
                     </div>
-
-                    <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
-                        <thead>
-                            <tr>
-                                <th style={{ textAlign: 'left', padding: '0.25rem', color: 'var(--text-secondary)' }}>Item</th>
-                                <th style={{ textAlign: 'left', padding: '0.25rem', color: 'var(--text-secondary)' }}>Barcode</th>
-                                <th style={{ textAlign: 'center', padding: '0.25rem', color: 'var(--text-secondary)' }}>Qty</th>
-                                <th style={{ textAlign: 'right', padding: '0.25rem', color: 'var(--text-secondary)' }}>Price</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {ver.items?.map((item, i) => (
-                                <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                    <td style={{ padding: '0.25rem' }}>{item.productName}</td>
-                                    <td style={{ padding: '0.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{item.barcode || '-'}</td>
-                                    <td style={{ padding: '0.25rem', textAlign: 'center' }}>{item.quantity}</td>
-                                    <td style={{ padding: '0.25rem', textAlign: 'right' }}>{item.price?.toFixed(2)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            ))}
-        </div>
+                )
+            }
+        </div >
     );
 };
+
+
 
 export default DailySalesTable;

@@ -49,7 +49,7 @@ export const printVoucher = (voucher) => {
                 </div>
 
                 <div class="title">Credit Voucher</div>
-                <div class="subtitle">Store Credit / Return Exchange</div>
+                <!-- Subtitle removed -->
 
                 <div class="voucher-box">
                     <div class="code-label">VOUCHER CODE</div>
@@ -70,16 +70,16 @@ export const printVoucher = (voucher) => {
                         <span>Valid Until:</span>
                         <span>${new Date(voucher.expiryDate).toLocaleDateString()}</span>
                     </div>` : ''}
-                    <div class="row" style="margin-top: 5px;">
-                        <span>Status:</span>
-                        <span>ACTIVE</span>
+                    <div class="row" style="margin-top: 5px; font-weight: bold; color: #000;">
+                        <span>Validity:</span>
+                        <span>7 DAYS ONLY</span>
                     </div>
                 </div>
 
                 <div class="footer">
                     * This voucher is non-refundable and cannot be exchanged for cash.<br>
                     * Please present this slip at the counter for redemption.<br>
-                    * Valid for 6 months from date of issue.
+                    * Valid for 7 days only.
                 </div>
 
                 <script>

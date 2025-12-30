@@ -4,6 +4,7 @@ import { useProductsPaged, createProduct, updateProduct, deleteProduct } from '.
 import { useStore } from '../context/StoreContext';
 import { useQueryClient } from '@tanstack/react-query';
 import * as XLSX from 'xlsx';
+import ImportPreviewModal from '../components/products/ImportPreviewModal';
 
 // Components
 import LogsDropdown from '../components/LogsDropdown';
@@ -29,6 +30,11 @@ const Products = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [productToDelete, setProductToDelete] = useState(null);
+
+    // Import Preview State
+    const [isImportPreviewOpen, setIsImportPreviewOpen] = useState(false);
+    const [importPreviewData, setImportPreviewData] = useState({ newItems: [], updates: [] });
+    const [importProcessing, setImportProcessing] = useState(false);
 
     // QR State
     const [isQrModalOpen, setIsQrModalOpen] = useState(false);
@@ -84,6 +90,14 @@ const Products = () => {
         }
     };
 
+    // Helper to clean formatted numbers
+    const parseNumber = (val) => {
+        if (typeof val === 'number') return val;
+        if (!val) return 0;
+        const str = String(val).replace(/[^0-9.-]/g, '');
+        return parseFloat(str) || 0;
+    };
+
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -91,74 +105,131 @@ const Products = () => {
         const reader = new FileReader();
         reader.onload = async (evt) => {
             try {
+                // 1. Read Excel
                 const bstr = evt.target.result;
                 const wb = XLSX.read(bstr, { type: 'binary' });
                 const wsname = wb.SheetNames[0];
                 const ws = wb.Sheets[wsname];
-                const data = XLSX.utils.sheet_to_json(ws);
+                const data = XLSX.utils.sheet_to_json(ws, { raw: false });
 
                 if (data.length === 0) {
                     showAlert("Excel file is empty!");
+                    e.target.value = '';
                     return;
                 }
 
-                // 1. Fetch latest products for validation - Skipped for performance (Backend validates)
-                // const currentProducts = await loadProducts();
+                setManualLoading(true);
 
-                // 2. Validation
+                // 2. Fetch ALL existing products to compare
+                const { fetchProducts } = await import('../api/products');
+                const existingProducts = await fetchProducts(selectedStoreId);
+
+                const productMap = new Map();
+                existingProducts.forEach(p => productMap.set(p.barcode, p));
+
+                const newItems = [];
+                const updates = [];
                 const seenBarcodesInFile = new Set();
                 const duplicates = [];
 
+                // 3. Compare Items
                 for (const row of data) {
-                    // Map keys (case-insensitive or specific names)
-                    // Expected keys: Name, Barcode
                     const barcode = String(row.Barcode || row.barcode || '').trim();
                     const name = row.Name || row.name;
 
-                    if (!barcode || !name) continue; // Skip incomplete
+                    if (!barcode || !name) continue;
 
-                    // Check duplicate in File
                     if (seenBarcodesInFile.has(barcode)) {
-                        duplicates.push(barcode + " (Duplicate in File)");
+                        duplicates.push(barcode);
+                        continue;
+                    }
+                    seenBarcodesInFile.add(barcode);
+
+                    const payload = {
+                        name: row.Name || row.name,
+                        barcode: barcode,
+                        price: parseNumber(row.Price || row.price),
+                        costPrice: parseNumber(row.Cost || row.cost),
+                        stock: parseInt(String(row.Stock || row.stock).replace(/[^0-9]/g, '') || 0),
+                        alertLevel: parseInt(String(row.Alert || row.alert || 5).replace(/[^0-9]/g, '') || 5),
+                        storeId: selectedStoreId
+                    };
+
+                    if (productMap.has(barcode)) {
+                        const original = productMap.get(barcode);
+                        // Add to updates list
+                        updates.push({
+                            original: original,
+                            new: payload
+                        });
                     } else {
-                        seenBarcodesInFile.add(barcode);
+                        // Add to new list
+                        newItems.push(payload);
                     }
                 }
 
                 if (duplicates.length > 0) {
-                    showAlert(`Upload Aborted! Duplicate barcodes found: ${duplicates.join(', ')}`);
-                    e.target.value = ''; // Reset input
-                    return;
+                    showAlert(`Warning: Skipped ${duplicates.length} duplicate barcodes in file.`);
                 }
 
-                // 3. Upload if no duplicates
-                let successCount = 0;
-                setManualLoading(true);
-                for (const row of data) {
-                    const payload = {
-                        name: row.Name || row.name,
-                        barcode: String(row.Barcode || row.barcode || ''),
-                        price: parseFloat(row.Price || row.price || 0),
-                        costPrice: parseFloat(row.Cost || row.cost || 0),
-                        stock: parseInt(row.Stock || row.stock || 0),
-                        alertLevel: parseInt(row.Alert || row.alert || 5)
-                    };
-                    await createProduct(payload);
-                    successCount++;
-                }
-
-                showAlert(`Successfully uploaded ${successCount} products!`, 'success');
-                queryClient.invalidateQueries({ queryKey: ['products'] });
+                setImportPreviewData({ newItems, updates });
+                setIsImportPreviewOpen(true);
 
             } catch (error) {
-                console.error("Upload error", error);
-                showAlert("Failed to parse or upload file. Check format.");
+                // Upload error
+
+                showAlert("Failed to parse file: " + error.message);
             } finally {
                 setManualLoading(false);
-                e.target.value = ''; // Reset
+                e.target.value = '';
             }
         };
         reader.readAsBinaryString(file);
+    };
+
+    const handleConfirmImport = async () => {
+        setImportProcessing(true);
+        const { newItems, updates } = importPreviewData;
+        let successCount = 0;
+        let errorCount = 0;
+
+        try {
+            // Process New Items
+            for (const item of newItems) {
+                try {
+                    await createProduct(item);
+                    successCount++;
+                } catch (e) {
+                    // Add failed
+
+                    errorCount++;
+                }
+            }
+
+            // Process Updates
+            for (const item of updates) {
+                try {
+                    // Update Product
+                    // Ensure we pass the ID
+                    await updateProduct(item.original.productId, item.new);
+                    successCount++;
+                } catch (e) {
+                    // Update failed
+
+                    errorCount++;
+                }
+            }
+
+            showAlert(`Import Completed. Success: ${successCount}, Errors: ${errorCount}`, errorCount > 0 ? 'warning' : 'success');
+            setIsImportPreviewOpen(false);
+            setImportPreviewData({ newItems: [], updates: [] });
+            queryClient.invalidateQueries({ queryKey: ['products'] });
+
+        } catch (error) {
+            showAlert("Critial Process Error: " + error.message);
+        } finally {
+            setImportProcessing(false);
+        }
     };
 
     const handleImportClick = () => {
@@ -426,6 +497,15 @@ const Products = () => {
                 onChange={handleInputChange}
                 isOwner={isOwner}
                 editingId={editingId}
+            />
+
+            {/* Import Preview Modal */}
+            <ImportPreviewModal
+                isOpen={isImportPreviewOpen}
+                onClose={() => setIsImportPreviewOpen(false)}
+                data={importPreviewData}
+                onConfirm={handleConfirmImport}
+                isProcessing={importProcessing}
             />
 
             {/* Delete Confirmation Modal */}

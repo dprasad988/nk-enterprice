@@ -7,6 +7,7 @@ const DeleteProductModal = ({ isOpen, onClose, onConfirm, productName }) => {
             isOpen={isOpen}
             onClose={onClose}
             title="Confirm Delete"
+            borderColor="var(--danger)"
         >
             <div style={{ padding: '1rem', textAlign: 'center' }}>
                 <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>

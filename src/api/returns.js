@@ -68,3 +68,23 @@ export const useAllReturns = (storeId) => {
         staleTime: 60000 // 1 min
     });
 };
+
+// Process Exchange Good Return
+export const processExchangeReturn = async (items) => {
+    try {
+        const response = await api.post('/returns/exchange', items);
+        return response.data;
+    } catch (error) {
+        throw error;
+    }
+};
+
+// Rollback an exchange (undo inventory addition)
+export const rollbackExchange = async (returnIds) => {
+    try {
+        await api.post('/returns/rollback', returnIds);
+    } catch (error) {
+        console.error("Rollback failed:", error);
+        throw error;
+    }
+};
